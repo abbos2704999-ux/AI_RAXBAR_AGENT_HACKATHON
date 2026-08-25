@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+credentials*
+secrets*
+token*
+service-account*.json
+
+# Google / Apps Script private configs
+.clasp.json
+.clasprc.json
+
+# Local data / sensitive artifacts
+data_private/
+private_data/
+raw_data/
+real_data/
+production_data/
+*.duckdb
+*.sqlite
+*.db
+
+# Logs / caches
+*.log
+.cache/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
