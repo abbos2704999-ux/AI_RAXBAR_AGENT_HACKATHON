@@ -109,17 +109,28 @@ action execution, no `simulate_remediation` call from the agent layer.
   is even possible; no credential is ever hardcoded, logged, or printed.
   Default model is `gemini-3.5-flash`, overridable via
   `AI_RAXBAR_GEMINI_MODEL`.
-- **Gemini integration status: CODE_READY, LIVE_ATTEMPTED_NOT_VERIFIED.**
-  The ADK agent and Gemini model wiring are implemented and offline-tested
-  against a scripted fake model (`tests/fakes.py::ScriptedFakeLlm`, a real
-  `google.adk` `BaseLlm` subclass driving the real tool-calling loop with no
-  network access). Two controlled, opt-in live smoke-test attempts
-  (`scripts/smoke_test_gemini.py --yes`) have reached the real Gemini API;
-  both returned an upstream `503 UNAVAILABLE` ("high demand") error rather
-  than a successful response, so a live call has been *attempted* but not
-  yet *verified end-to-end*. `scripts/smoke_test_gemini.py` remains an
-  explicit, opt-in, human-run command (`--yes` required); nothing in this
-  repository runs it automatically or retries it on its own.
+- **Gemini integration status: LIVE_VERIFIED.** The ADK agent and Gemini
+  model wiring are implemented and offline-tested against a scripted fake
+  model (`tests/fakes.py::ScriptedFakeLlm`, a real `google.adk` `BaseLlm`
+  subclass driving the real tool-calling loop with no network access), and
+  have also been verified against the real Gemini API. Three controlled,
+  opt-in live smoke-test attempts (`scripts/smoke_test_gemini.py --yes
+  --asset-id DEMO-TP-007`, model `gemini-3.5-flash`) have been run: the
+  first two returned an upstream `503 UNAVAILABLE` ("high demand") error;
+  the third completed successfully end-to-end. That run confirmed: a real
+  Gemini response was received; `risk_score`/`risk_level`/`evidence_refs`
+  matched the deterministic risk engine's known output for
+  `DEMO-TP-007` (`100`/`CRITICAL`, 14 evidence refs) rather than anything
+  the model asserted; the `diagnosis` was genuine free-text model output;
+  `recommended_action` was `REBALANCE_LOAD`, classified `HIGH_IMPACT` by
+  `policy.py`, giving `approval_required=True` and
+  `next_step="WAIT_FOR_HUMAN_APPROVAL"`; and
+  `tools.simulate_remediation` was never called (it isn't in the agent's
+  tool list). No approval was granted and no action was taken during that
+  run -- it stopped at the policy gate, per this script's scope.
+  `scripts/smoke_test_gemini.py` remains an explicit, opt-in, human-run
+  command (`--yes` required); nothing in this repository runs it
+  automatically or retries it on its own.
 
 ## Current scope: Batch 3
 
@@ -220,11 +231,11 @@ incident/approval/audit state, without weakening any Batch 1-3 safety gate.
 
 ### Not yet implemented (NEXT / Batch 5+)
 
-- Live, successful Gemini verification (two attempts so far both hit an
-  upstream `503`; not yet retried).
-- A live Firestore connection/verification against a real GCP project.
+- A live Firestore connection/verification against a real GCP project (the
+  adapter is implemented and offline-tested; see Batch 4 above).
 - Any Cloud Run deployment or other live GCP service.
 - Any production write path.
+- Live Gemini verification is done -- see "Current scope: Batch 2" above.
 
 ## Pre-existing vs. new work
 
