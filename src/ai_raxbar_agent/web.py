@@ -33,20 +33,25 @@ import os
 import threading
 from dataclasses import asdict
 from importlib import metadata
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import approval, config
 from . import agent as agent_module
 from . import orchestrator
+from . import tools as batch1_tools
 from .audit import AuditRecord
 from .data_store import AssetNotFoundError, store
 from .local_repository import LocalRepository
 from .models import ApprovalState, ImpactClass
 from .orchestrator import ExecutionBlockedError, IncidentProposal
 from .repository import IncidentRecord, IncidentRepository, RepositoryError
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SERVICE_NAME = "ai-raxbar-agent"
 
@@ -311,6 +316,15 @@ def create_app() -> FastAPI:
         except RepositoryError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+        # Deterministic evidence for the demo UI's evidence panel (Batch 5E).
+        # A second, pure, read-only call into the same Batch 1 tools
+        # `analyze()` already delegated to internally -- no new decision, no
+        # new state mutation, no new endpoint. Exists only so the frontend
+        # can render "AI does not own the truth; evidence does." from real
+        # values instead of the model's response.
+        risk_evidence = batch1_tools.get_risk_evidence(req.asset_id)
+        recent_events = batch1_tools.get_recent_events(req.asset_id, limit=5)
+
         return {
             "incident_id": incident_id,
             "analysis": {
@@ -322,6 +336,12 @@ def create_app() -> FastAPI:
                 "policy_class": analysis.policy_class.value if analysis.policy_class else None,
                 "approval_required": analysis.approval_required,
                 "next_step": analysis.next_step,
+            },
+            "evidence": {
+                "risk_factors": risk_evidence.risk_factors,
+                "evidence_refs": risk_evidence.evidence_refs,
+                "recent_events": [asdict(e) for e in recent_events],
+                "asset_state": store.get_asset(req.asset_id).signal_snapshot(),
             },
             "audit_record": _audit_record_to_dict(record),
             "blocked": blocked,
@@ -357,6 +377,14 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
         return {"incident_id": incident_id, "audit_record": _audit_record_to_dict(record)}
+
+    @app.get("/demo", response_class=HTMLResponse)
+    def demo_page() -> HTMLResponse:
+        # Batch 5E: judge-facing static demo page. Pure presentation --
+        # all data comes from the JSON endpoints above via same-origin
+        # fetch() calls made by the browser; this handler does not call
+        # Gemini, Firestore, or any other module itself.
+        return HTMLResponse((_STATIC_DIR / "demo.html").read_text(encoding="utf-8"))
 
     return app
 

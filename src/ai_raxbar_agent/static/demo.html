@@ -1,0 +1,1025 @@
+<title>AI Raxbar — Operations Console</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<style>
+  :root {
+    --bg: #0b1220;
+    --bg-panel: #121b2e;
+    --bg-panel-2: #0f1728;
+    --border: #223047;
+    --border-soft: #1a253b;
+    --text: #e7edf7;
+    --text-dim: #93a2ba;
+    --text-faint: #5c6b85;
+    --accent: #3ecf9e;
+    --accent-dim: #1f5a49;
+    --blue: #4d9dff;
+    --warn: #f5b942;
+    --danger: #ef5b5b;
+    --danger-dim: #4a2229;
+    --ok: #3ecf9e;
+    --radius: 10px;
+    --mono: "SF Mono", "Menlo", "Consolas", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-width: 1024px;
+  }
+
+  a { color: var(--blue); }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #101a2c, #0d1526);
+  }
+
+  .brand { display: flex; align-items: center; gap: 12px; }
+
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), var(--blue));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: #04140f;
+    font-size: 18px;
+  }
+
+  .brand-title {
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+  }
+
+  .brand-sub {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    margin-top: 1px;
+  }
+
+  .topbar-badges { display: flex; gap: 10px; }
+
+  .badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .badge-synthetic { color: var(--warn); border-color: #5a4522; background: #241c0e; }
+  .badge-live { color: var(--accent); border-color: var(--accent-dim); background: #0f2019; }
+
+  .tech-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel-2);
+  }
+
+  .tech-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    padding: 6px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+
+  .tech-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    flex: none;
+  }
+
+  .tech-pill.is-live .tech-dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .tech-pill.is-live { color: var(--text); border-color: var(--accent-dim); }
+  .tech-pill.is-off .tech-dot { background: var(--text-faint); }
+  .tech-pill.is-off { color: var(--text-faint); }
+  .tech-pill.is-checking .tech-dot { background: var(--warn); animation: pulse 1.2s infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  .stepper {
+    display: flex;
+    gap: 6px;
+    padding: 14px 28px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--text-faint);
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-soft);
+    white-space: nowrap;
+    transition: all 0.25s ease;
+  }
+
+  .step .n {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--border-soft);
+    color: var(--text-faint);
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+
+  .step.active { color: var(--text); border-color: var(--blue); background: #0f1f36; }
+  .step.active .n { background: var(--blue); color: #04101f; }
+  .step.done { color: var(--accent); border-color: var(--accent-dim); background: #0f2019; }
+  .step.done .n { background: var(--accent); color: #04140f; }
+  .step.blocked { color: var(--danger); border-color: #4a2229; background: #200f11; }
+  .step.blocked .n { background: var(--danger); color: #200f11; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 20px;
+    padding: 22px 28px 60px;
+    align-items: start;
+  }
+
+  .sidebar { position: sticky; top: 18px; display: flex; flex-direction: column; gap: 16px; }
+
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  .panel.locked { opacity: 0.45; }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .panel-title .tag {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-faint);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+
+  .locked-note {
+    font-size: 12.5px;
+    color: var(--text-faint);
+    font-style: italic;
+  }
+
+  .incident-asset { font-size: 13px; color: var(--text-dim); margin-bottom: 6px; }
+  .incident-asset b { color: var(--text); font-family: var(--mono); }
+
+  .risk-row { display: flex; align-items: baseline; gap: 10px; margin: 10px 0; }
+  .risk-score { font-size: 42px; font-weight: 800; line-height: 1; font-family: var(--mono); }
+  .risk-level {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    padding: 4px 9px;
+    border-radius: 6px;
+  }
+
+  .risk-NORMAL { color: #0c2019; background: var(--ok); }
+  .risk-MEDIUM { color: #241c0e; background: var(--warn); }
+  .risk-HIGH { color: #fff; background: #e8813a; }
+  .risk-CRITICAL { color: #fff; background: var(--danger); }
+  .risk-unknown { color: var(--text-faint); background: var(--border-soft); }
+
+  .kv { display: flex; justify-content: space-between; font-size: 12.5px; padding: 5px 0; border-top: 1px solid var(--border-soft); color: var(--text-dim); }
+  .kv b { color: var(--text); font-weight: 600; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 11px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border: 1px solid transparent;
+    cursor: pointer;
+    margin-top: 10px;
+    transition: filter 0.15s ease;
+  }
+
+  .btn:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn:disabled { cursor: not-allowed; opacity: 0.42; }
+
+  .btn-primary { background: var(--blue); color: #04101f; }
+  .btn-approve { background: var(--ok); color: #04140f; }
+  .btn-reject { background: transparent; color: var(--danger); border-color: #4a2229; }
+  .btn-execute { background: var(--warn); color: #241c0e; }
+  .btn-ghost { background: transparent; color: var(--text-dim); border-color: var(--border); }
+
+  .status-line { font-size: 12px; color: var(--text-faint); margin-top: 8px; min-height: 16px; }
+  .status-line.error { color: var(--danger); }
+  .status-line.ok { color: var(--accent); }
+
+  .callout {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: center;
+    padding: 8px 10px;
+    border-radius: 7px;
+    margin-bottom: 12px;
+  }
+
+  .callout-truth {
+    background: #0f1728;
+    border: 1px dashed var(--border);
+    color: var(--text-dim);
+  }
+
+  .callout-highimpact {
+    background: var(--danger-dim);
+    border: 1px solid #6b2b32;
+    color: #ff9a9a;
+  }
+
+  .callout-sim {
+    background: #241c0e;
+    border: 1px solid #5a4522;
+    color: var(--warn);
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-soft);
+    border-radius: 5px;
+    padding: 3px 7px;
+  }
+
+  .field-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-faint); margin: 12px 0 5px; }
+
+  .event-row {
+    font-size: 12.5px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border-soft);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .event-row .ev-desc { color: var(--text); }
+  .event-row .ev-meta { color: var(--text-faint); white-space: nowrap; font-family: var(--mono); font-size: 11px; }
+
+  .diagnosis-text {
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--text);
+    background: var(--bg-panel-2);
+    border-left: 3px solid var(--blue);
+    padding: 12px 14px;
+    border-radius: 6px;
+  }
+
+  .uncertainty-list { margin: 10px 0 0; padding-left: 18px; color: var(--text-dim); font-size: 12.5px; }
+  .uncertainty-list li { margin-bottom: 4px; }
+
+  .action-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 10px 0;
+  }
+  .action-row .action-name { font-family: var(--mono); font-weight: 700; color: var(--text); }
+  .action-row .action-class {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    padding: 4px 8px;
+    border-radius: 5px;
+  }
+  .class-HIGH_IMPACT { background: var(--danger-dim); color: #ff9a9a; }
+  .class-MEDIUM_IMPACT { background: #2b230f; color: var(--warn); }
+  .class-LOW_IMPACT { background: #0f2019; color: var(--accent); }
+
+  .decision-row { display: flex; gap: 10px; margin-top: 6px; }
+  .decision-row .btn { margin-top: 0; }
+
+  .approval-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 5px 10px;
+    border-radius: 999px;
+    margin-top: 4px;
+  }
+  .approval-PENDING { background: #2b230f; color: var(--warn); }
+  .approval-APPROVED { background: #0f2019; color: var(--ok); }
+  .approval-REJECTED { background: var(--danger-dim); color: var(--danger); }
+
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+  .compare-card { background: var(--bg-panel-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 12px; }
+  .compare-card h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.06em; color: var(--text-faint); }
+  .compare-kv { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; font-family: var(--mono); color: var(--text-dim); }
+  .compare-kv b { color: var(--text); }
+  .compare-kv.changed b { color: var(--warn); }
+
+  .verify-badge {
+    display: inline-block;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    padding: 7px 14px;
+    border-radius: 7px;
+    margin-top: 12px;
+  }
+  .verify-IMPROVED { background: var(--ok); color: #04140f; }
+  .verify-WORSENED { background: var(--danger); color: #fff; }
+  .verify-NO_CHANGE { background: var(--border-soft); color: var(--text-dim); }
+
+  .timeline { list-style: none; margin: 0; padding: 0; }
+  .timeline li {
+    display: flex;
+    gap: 12px;
+    padding: 9px 0;
+    border-top: 1px solid var(--border-soft);
+    font-size: 12.5px;
+  }
+  .timeline li:first-child { border-top: none; }
+  .timeline .t-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--border-soft);
+    margin-top: 5px;
+    flex: none;
+  }
+  .timeline li.done .t-dot { background: var(--accent); }
+  .timeline li.blocked .t-dot { background: var(--danger); }
+  .timeline .t-label { font-weight: 700; letter-spacing: 0.03em; color: var(--text); }
+  .timeline .t-detail { color: var(--text-faint); font-family: var(--mono); font-size: 11.5px; }
+  .timeline .t-time { color: var(--text-faint); font-size: 11px; margin-left: auto; white-space: nowrap; }
+
+  .firestore-note { font-size: 11.5px; color: var(--text-faint); margin-top: 10px; border-top: 1px dashed var(--border-soft); padding-top: 10px; }
+
+  .prove-blocked-result {
+    margin-top: 10px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--danger);
+    background: var(--danger-dim);
+    border: 1px solid #4a2229;
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: none;
+  }
+</style>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">R</div>
+    <div>
+      <div class="brand-title">AI RAXBAR</div>
+      <div class="brand-sub">Autonomous Critical Infrastructure Operations Agent</div>
+    </div>
+  </div>
+  <div class="topbar-badges">
+    <span class="badge badge-synthetic">SYNTHETIC DEMO</span>
+    <span class="badge badge-live">LIVE GOOGLE CLOUD BACKEND</span>
+  </div>
+</div>
+
+<div class="tech-strip" id="techStrip">
+  <span class="tech-pill is-checking" data-pill="run"><span class="tech-dot"></span>Cloud Run — checking…</span>
+  <span class="tech-pill is-checking" data-pill="adk"><span class="tech-dot"></span>Google ADK — checking…</span>
+  <span class="tech-pill is-checking" data-pill="gemini"><span class="tech-dot"></span>Gemini 3.5 Flash — checking…</span>
+  <span class="tech-pill is-checking" data-pill="firestore"><span class="tech-dot"></span>Firestore — checking…</span>
+</div>
+
+<div class="stepper" id="stepper"></div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="panel" id="incidentPanel">
+      <div class="panel-title">INCIDENT<span class="tag">DEMO-TP-007</span></div>
+      <div class="incident-asset">Asset <b id="assetIdLabel">DEMO-TP-007</b></div>
+      <div class="risk-row">
+        <span class="risk-score" id="riskScore">—</span>
+        <span class="risk-level risk-unknown" id="riskLevel">UNKNOWN</span>
+      </div>
+      <div class="kv"><span>Incident state</span><b id="incidentState">NOT STARTED</b></div>
+      <div class="kv"><span>Evidence count</span><b id="evidenceCount">—</b></div>
+      <div class="kv"><span>Incident ID</span><b id="incidentIdLabel" style="font-family: var(--mono); font-size: 11px;">—</b></div>
+      <button class="btn btn-primary" id="runAnalysisBtn">▶ RUN LIVE ANALYSIS</button>
+      <div class="status-line" id="analysisStatus"></div>
+    </div>
+    <button class="btn btn-ghost" id="resetBtn">↺ RESET DEMO</button>
+  </div>
+
+  <div class="content">
+    <div class="panel locked" id="evidencePanel">
+      <div class="panel-title">DETERMINISTIC EVIDENCE<span class="tag">TOOL-OWNED</span></div>
+      <div class="callout callout-truth">AI DOES NOT OWN THE TRUTH. EVIDENCE DOES.</div>
+      <div class="locked-note" id="evidenceLocked">Waiting for analysis…</div>
+      <div id="evidenceBody" style="display:none;">
+        <div class="field-label">RISK FACTORS</div>
+        <div class="chips" id="riskFactors"></div>
+        <div class="field-label">EVIDENCE REFERENCES (<span id="evidenceRefCount">0</span>)</div>
+        <div class="chips" id="evidenceRefs"></div>
+        <div class="field-label">RECENT EVENTS</div>
+        <div id="recentEvents"></div>
+        <div class="field-label">OPERATIONAL STATE (SYNTHETIC)</div>
+        <div id="assetState"></div>
+      </div>
+    </div>
+
+    <div class="panel locked" id="geminiPanel" style="margin-top:16px;">
+      <div class="panel-title">GEMINI 3.5 DIAGNOSIS<span class="tag">MODEL OUTPUT</span></div>
+      <div class="locked-note" id="geminiLocked">Waiting for analysis…</div>
+      <div id="geminiBody" style="display:none;">
+        <div class="diagnosis-text" id="diagnosisText"></div>
+        <div class="field-label">UNCERTAINTY</div>
+        <ul class="uncertainty-list" id="uncertaintyList"></ul>
+        <div class="field-label">RECOMMENDED REMEDIATION</div>
+        <div class="action-row">
+          <span class="action-name" id="recommendedAction">—</span>
+          <span class="action-class" id="policyClassBadge">—</span>
+        </div>
+        <div class="field-label">EVIDENCE REFERENCES USED</div>
+        <div class="chips" id="citedEvidenceRefs"></div>
+      </div>
+    </div>
+
+    <div class="panel locked" id="policyPanel" style="margin-top:16px;">
+      <div class="panel-title">POLICY GATE &amp; HUMAN APPROVAL<span class="tag">DETERMINISTIC</span></div>
+      <div class="locked-note" id="policyLocked">Waiting for analysis…</div>
+      <div id="policyBody" style="display:none;">
+        <div class="callout callout-highimpact" id="highImpactBanner">HIGH IMPACT ACTION — HUMAN APPROVAL REQUIRED</div>
+        <div class="kv"><span>Recommended action</span><b id="policyActionLabel">—</b></div>
+        <div class="kv"><span>Policy classification</span><b id="policyClassLabel">—</b></div>
+        <div class="kv"><span>Approval status</span><span class="approval-status approval-PENDING" id="approvalStatusBadge">PENDING</span></div>
+        <div class="field-label">APPROVER IDENTITY</div>
+        <input id="approverInput" type="text" value="demo-operator" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-panel-2);color:var(--text);font-size:12.5px;" />
+        <div class="decision-row">
+          <button class="btn btn-approve" id="approveBtn">✓ APPROVE</button>
+          <button class="btn btn-reject" id="rejectBtn">✕ REJECT</button>
+        </div>
+        <div class="status-line" id="approvalStatusLine"></div>
+      </div>
+    </div>
+
+    <div class="panel locked" id="actionPanel" style="margin-top:16px;">
+      <div class="panel-title">SIMULATED ACTION<span class="tag">NO REAL GRID CONTROL</span></div>
+      <div class="callout callout-sim">SIMULATION — NO REAL GRID CONTROL. NO EXTERNAL SYSTEM IS EVER COMMANDED.</div>
+      <div class="locked-note" id="actionLocked">Waiting for approval…</div>
+      <div id="actionBody" style="display:none;">
+        <button class="btn btn-execute" id="executeBtn" disabled>⚙ EXECUTE SIMULATED REMEDIATION</button>
+        <button class="btn btn-ghost" id="proveBlockedBtn" style="display:none;">Prove execution is blocked →</button>
+        <div class="prove-blocked-result" id="proveBlockedResult"></div>
+        <div class="status-line" id="executeStatus"></div>
+
+        <div id="verifyBody" style="display:none;">
+          <div class="field-label">BEFORE / AFTER (LIVE API RESPONSE)</div>
+          <div class="compare-grid">
+            <div class="compare-card">
+              <h4>BEFORE</h4>
+              <div class="compare-kv"><span>risk_score</span><b id="riskBeforeVal">—</b></div>
+              <div id="beforeStateRows"></div>
+            </div>
+            <div class="compare-card">
+              <h4>AFTER</h4>
+              <div class="compare-kv"><span>risk_score</span><b id="riskAfterVal">—</b></div>
+              <div id="afterStateRows"></div>
+            </div>
+          </div>
+          <div>
+            <span class="verify-badge" id="verificationBadge">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel locked" id="auditPanel" style="margin-top:16px;">
+      <div class="panel-title">AUDIT TRAIL<span class="tag">FIRESTORE-SHAPED</span></div>
+      <div class="locked-note" id="auditLocked">Waiting for workflow to start…</div>
+      <ul class="timeline" id="auditTimeline"></ul>
+      <div class="firestore-note" id="firestoreNote"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var ASSET_ID = "DEMO-TP-007";
+
+  var STEPS = [
+    { key: "incident", label: "INCIDENT" },
+    { key: "evidence", label: "EVIDENCE" },
+    { key: "diagnosis", label: "GEMINI DIAGNOSIS" },
+    { key: "plan", label: "REMEDIATION PLAN" },
+    { key: "policy", label: "POLICY GATE" },
+    { key: "approval", label: "HUMAN APPROVAL" },
+    { key: "action", label: "SIMULATED ACTION" },
+    { key: "before_after", label: "BEFORE / AFTER" },
+    { key: "verified", label: "VERIFIED RESULT" },
+    { key: "audit", label: "AUDIT TRAIL" }
+  ];
+
+  var state = {
+    incidentId: null,
+    blocked: false,
+    approvalStatus: null,
+    firestoreConfigured: false
+  };
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s === null || s === undefined ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function $(id) { return document.getElementById(id); }
+
+  function nowLabel() {
+    var d = new Date();
+    return d.toLocaleTimeString();
+  }
+
+  // --- stepper -----------------------------------------------------------
+
+  function renderStepper() {
+    var el = $("stepper");
+    el.innerHTML = STEPS.map(function (s, i) {
+      return (
+        '<span class="step" id="step-' + s.key + '">' +
+        '<span class="n">' + (i + 1) + "</span>" + esc(s.label) +
+        "</span>"
+      );
+    }).join("");
+  }
+
+  function setStep(key, status) {
+    var el = $("step-" + key);
+    if (!el) return;
+    el.classList.remove("active", "done", "blocked");
+    if (status) el.classList.add(status);
+  }
+
+  // --- audit timeline ------------------------------------------------------
+
+  function auditEntry(label, detail, kind) {
+    var ul = $("auditTimeline");
+    $("auditLocked").style.display = "none";
+    var li = document.createElement("li");
+    li.className = kind || "done";
+    li.innerHTML =
+      '<span class="t-dot"></span><span><span class="t-label">' + esc(label) +
+      '</span><br><span class="t-detail">' + esc(detail || "") + "</span></span>" +
+      '<span class="t-time">' + esc(nowLabel()) + "</span>";
+    ul.appendChild(li);
+  }
+
+  // --- tech status strip ---------------------------------------------------
+
+  function setPill(name, live, text) {
+    var pill = document.querySelector('[data-pill="' + name + '"]');
+    if (!pill) return;
+    pill.classList.remove("is-checking", "is-live", "is-off");
+    pill.classList.add(live ? "is-live" : "is-off");
+    pill.innerHTML = '<span class="tech-dot"></span>' + esc(text);
+  }
+
+  function loadTechStatus() {
+    fetch("/api/status")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var geminiLive = d.gemini_integration === "CONFIGURED";
+        var firestoreLive = d.firestore_integration === "FIRESTORE_CONFIGURED";
+        state.firestoreConfigured = firestoreLive;
+        setPill("run", true, "Cloud Run — LIVE");
+        setPill("adk", geminiLive, "Google ADK — " + (geminiLive ? "LIVE" : "IDLE (no Gemini credential)"));
+        setPill("gemini", geminiLive, "Gemini 3.5 Flash — " + (geminiLive ? "LIVE" : "NOT CONFIGURED"));
+        setPill("firestore", firestoreLive, "Firestore — " + (firestoreLive ? "LIVE" : "LOCAL_ONLY"));
+      })
+      .catch(function () {
+        setPill("run", false, "Cloud Run — UNREACHABLE");
+        setPill("adk", false, "Google ADK — UNKNOWN");
+        setPill("gemini", false, "Gemini 3.5 Flash — UNKNOWN");
+        setPill("firestore", false, "Firestore — UNKNOWN");
+      });
+  }
+
+  // --- rendering helpers -----------------------------------------------------
+
+  function renderRisk(score, level) {
+    $("riskScore").textContent = score === null || score === undefined ? "—" : score;
+    var levelEl = $("riskLevel");
+    levelEl.textContent = level || "UNKNOWN";
+    levelEl.className = "risk-level risk-" + (level || "unknown");
+  }
+
+  function renderChips(containerId, items) {
+    var el = $(containerId);
+    if (!items || !items.length) {
+      el.innerHTML = '<span class="chip">none</span>';
+      return;
+    }
+    el.innerHTML = items.map(function (i) { return '<span class="chip">' + esc(i) + "</span>"; }).join("");
+  }
+
+  function renderEvents(items) {
+    var el = $("recentEvents");
+    if (!items || !items.length) {
+      el.innerHTML = '<div class="locked-note">No recent synthetic events.</div>';
+      return;
+    }
+    el.innerHTML = items.map(function (e) {
+      return (
+        '<div class="event-row"><span class="ev-desc">' + esc(e.description) +
+        '</span><span class="ev-meta">' + esc(e.event_type) + " · " + esc(e.severity) + "</span></div>"
+      );
+    }).join("");
+  }
+
+  function renderAssetState(stateObj) {
+    var el = $("assetState");
+    if (!stateObj) { el.innerHTML = ""; return; }
+    var rows = Object.keys(stateObj).map(function (k) {
+      return '<div class="compare-kv"><span>' + esc(k) + "</span><b>" + esc(stateObj[k]) + "</b></div>";
+    });
+    el.innerHTML = rows.join("");
+  }
+
+  function renderStateCompare(containerId, before, after, key) {
+    var el = $(containerId);
+    if (!before) { el.innerHTML = ""; return; }
+    var rows = Object.keys(before).map(function (k) {
+      var changed = after && String(before[k]) !== String(after[k]);
+      return (
+        '<div class="compare-kv' + (changed ? " changed" : "") + '"><span>' + esc(k) +
+        "</span><b>" + esc(before[k]) + "</b></div>"
+      );
+    });
+    el.innerHTML = rows.join("");
+  }
+
+  // --- API helpers -------------------------------------------------------
+
+  function postJSON(url, body) {
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+    });
+  }
+
+  // --- workflow actions ----------------------------------------------------
+
+  function resetDemo() {
+    state.incidentId = null;
+    state.blocked = false;
+    state.approvalStatus = null;
+
+    renderStepper();
+    setStep("incident", null);
+
+    renderRisk(null, null);
+    $("incidentState").textContent = "NOT STARTED";
+    $("evidenceCount").textContent = "—";
+    $("incidentIdLabel").textContent = "—";
+    $("analysisStatus").textContent = "";
+    $("analysisStatus").className = "status-line";
+    $("runAnalysisBtn").disabled = false;
+    $("runAnalysisBtn").textContent = "▶ RUN LIVE ANALYSIS";
+
+    ["evidencePanel", "geminiPanel", "policyPanel", "actionPanel"].forEach(function (id) {
+      $(id).classList.add("locked");
+    });
+    $("evidenceLocked").style.display = "block";
+    $("evidenceBody").style.display = "none";
+    $("geminiLocked").style.display = "block";
+    $("geminiBody").style.display = "none";
+    $("policyLocked").style.display = "block";
+    $("policyBody").style.display = "none";
+    $("actionLocked").style.display = "block";
+    $("actionBody").style.display = "none";
+    $("verifyBody").style.display = "none";
+    $("proveBlockedBtn").style.display = "none";
+    $("proveBlockedResult").style.display = "none";
+    $("executeBtn").disabled = true;
+    $("executeStatus").textContent = "";
+    $("approvalStatusLine").textContent = "";
+    $("approveBtn").disabled = false;
+    $("rejectBtn").disabled = false;
+
+    $("auditTimeline").innerHTML = "";
+    $("auditLocked").style.display = "block";
+    $("firestoreNote").textContent = "";
+  }
+
+  function runAnalysis() {
+    $("runAnalysisBtn").disabled = true;
+    $("runAnalysisBtn").textContent = "Calling Gemini 3.5 via Cloud Run…";
+    $("analysisStatus").className = "status-line";
+    $("analysisStatus").textContent = "POST /api/incidents/analyze — this may take a few seconds (live model call).";
+    setStep("incident", "active");
+
+    postJSON("/api/incidents/analyze", { asset_id: ASSET_ID })
+      .then(function (res) {
+        if (!res.ok) {
+          $("runAnalysisBtn").disabled = false;
+          $("runAnalysisBtn").textContent = "▶ RUN LIVE ANALYSIS";
+          $("analysisStatus").className = "status-line error";
+          $("analysisStatus").textContent =
+            "Analysis failed (HTTP " + res.status + "): " + (res.data && res.data.detail ? res.data.detail : "unknown error") +
+            ". Not retrying automatically.";
+          setStep("incident", "blocked");
+          auditEntry("ANALYSIS_FAILED", "HTTP " + res.status, "blocked");
+          return;
+        }
+        onAnalyzeSuccess(res.data);
+      })
+      .catch(function (err) {
+        $("runAnalysisBtn").disabled = false;
+        $("runAnalysisBtn").textContent = "▶ RUN LIVE ANALYSIS";
+        $("analysisStatus").className = "status-line error";
+        $("analysisStatus").textContent = "Network error calling backend: " + err;
+        setStep("incident", "blocked");
+      });
+  }
+
+  function onAnalyzeSuccess(data) {
+    state.incidentId = data.incident_id;
+    state.blocked = !!data.blocked;
+
+    var a = data.analysis;
+    var ev = data.evidence;
+    var rec = data.audit_record;
+
+    $("incidentIdLabel").textContent = data.incident_id;
+    $("runAnalysisBtn").textContent = "✓ ANALYSIS COMPLETE";
+    $("analysisStatus").className = "status-line ok";
+    $("analysisStatus").textContent = "Live Gemini response received via Cloud Run.";
+
+    renderRisk(a.risk_score, a.risk_level);
+    $("incidentState").textContent = rec.action_status;
+    $("evidenceCount").textContent = ev.evidence_refs.length;
+
+    setStep("incident", "done");
+    auditEntry("DETECTED", "asset=" + ASSET_ID + " risk=" + a.risk_score + "/" + a.risk_level);
+    auditEntry("ANALYZED", "Gemini 3.5 Flash diagnosis received via Google ADK");
+
+    // Evidence panel.
+    $("evidencePanel").classList.remove("locked");
+    $("evidenceLocked").style.display = "none";
+    $("evidenceBody").style.display = "block";
+    renderChips("riskFactors", ev.risk_factors);
+    $("evidenceRefCount").textContent = ev.evidence_refs.length;
+    renderChips("evidenceRefs", ev.evidence_refs);
+    renderEvents(ev.recent_events);
+    renderAssetState(ev.asset_state);
+    setStep("evidence", "done");
+    auditEntry("POLICY_CHECKED", "policy_class=" + (a.policy_class || "NONE"));
+
+    // Gemini panel.
+    $("geminiPanel").classList.remove("locked");
+    $("geminiLocked").style.display = "none";
+    $("geminiBody").style.display = "block";
+    $("diagnosisText").textContent = a.diagnosis || "(no diagnosis text returned)";
+    var ul = $("uncertaintyList");
+    ul.innerHTML = (a.uncertainties || []).map(function (u) { return "<li>" + esc(u) + "</li>"; }).join("") ||
+      "<li>None reported.</li>";
+    $("recommendedAction").textContent = a.recommended_action || "NO ACTION RECOMMENDED";
+    var classBadge = $("policyClassBadge");
+    classBadge.textContent = a.policy_class || "N/A";
+    classBadge.className = "action-class class-" + (a.policy_class || "NONE");
+    renderChips("citedEvidenceRefs", rec.evidence_refs);
+    setStep("diagnosis", "done");
+    setStep("plan", "done");
+
+    // Policy gate + approval panel.
+    $("policyPanel").classList.remove("locked");
+    $("policyLocked").style.display = "none";
+    $("policyBody").style.display = "block";
+    $("policyActionLabel").textContent = a.recommended_action || "—";
+    $("policyClassLabel").textContent = a.policy_class || "—";
+    $("highImpactBanner").style.display = a.policy_class === "HIGH_IMPACT" ? "block" : "none";
+    setApprovalBadge(rec.approval_status);
+    setStep("policy", "done");
+
+    if (!a.recommended_action) {
+      // No action proposed at all -- nothing further to approve/execute.
+      $("approveBtn").disabled = true;
+      $("rejectBtn").disabled = true;
+      $("approvalStatusLine").textContent = "No remediation action was recommended for this incident.";
+      setStep("approval", "done");
+      setStep("action", "blocked");
+      setStep("before_after", "blocked");
+      setStep("verified", "blocked");
+    } else if (state.blocked) {
+      setStep("approval", "active");
+      auditEntry("WAITING_APPROVAL", "action=" + a.recommended_action + " (" + a.policy_class + ")");
+      $("actionPanel").classList.remove("locked");
+      $("actionLocked").style.display = "none";
+      $("actionBody").style.display = "block";
+      $("executeBtn").disabled = true;
+      $("executeStatus").textContent = "Blocked — awaiting human approval.";
+    } else {
+      // Policy cleared it automatically (LOW/MEDIUM impact) -- the backend
+      // already executed it inside the analyze call.
+      setApprovalBadge(rec.approval_status);
+      setStep("approval", "done");
+      onExecuted(rec, /*fromAnalyze=*/ true);
+    }
+  }
+
+  function setApprovalBadge(status) {
+    var el = $("approvalStatusBadge");
+    el.textContent = status;
+    el.className = "approval-status approval-" + status;
+  }
+
+  function decide(action) {
+    if (!state.incidentId) return;
+    var approver = $("approverInput").value || "demo-operator";
+    $("approveBtn").disabled = true;
+    $("rejectBtn").disabled = true;
+    $("approvalStatusLine").textContent = "Submitting " + action + "…";
+
+    postJSON("/api/incidents/" + encodeURIComponent(state.incidentId) + "/" + action, {
+      approver: approver,
+      reason: action === "approve" ? "Approved via AI Raxbar demo console" : "Rejected via AI Raxbar demo console"
+    }).then(function (res) {
+      if (!res.ok) {
+        $("approvalStatusLine").textContent = "Failed (HTTP " + res.status + "): " + (res.data.detail || "");
+        $("approveBtn").disabled = false;
+        $("rejectBtn").disabled = false;
+        return;
+      }
+      var status = res.data.approval.status;
+      setApprovalBadge(status);
+      state.approvalStatus = status;
+
+      if (status === "APPROVED") {
+        $("approvalStatusLine").textContent = "APPROVED by " + esc(res.data.approval.approver) + ". Execution unlocked.";
+        setStep("approval", "done");
+        auditEntry("APPROVED", "approver=" + res.data.approval.approver);
+        $("executeBtn").disabled = false;
+        $("executeStatus").textContent = "Ready — approval confirmed by backend.";
+      } else {
+        $("approvalStatusLine").textContent = "REJECTED by " + esc(res.data.approval.approver) + ". Execution permanently blocked for this incident.";
+        setStep("approval", "blocked");
+        setStep("action", "blocked");
+        setStep("before_after", "blocked");
+        setStep("verified", "blocked");
+        auditEntry("REJECTED", "approver=" + res.data.approval.approver, "blocked");
+        $("executeBtn").disabled = true;
+        $("executeStatus").textContent = "Blocked — this incident was rejected and can never execute.";
+        $("proveBlockedBtn").style.display = "inline-flex";
+      }
+    }).catch(function (err) {
+      $("approvalStatusLine").textContent = "Network error: " + err;
+      $("approveBtn").disabled = false;
+      $("rejectBtn").disabled = false;
+    });
+  }
+
+  function proveBlocked() {
+    postJSON("/api/incidents/" + encodeURIComponent(state.incidentId) + "/execute", {}).then(function (res) {
+      var box = $("proveBlockedResult");
+      box.style.display = "block";
+      box.textContent = "HTTP " + res.status + " — " + (res.data.detail || "execution refused");
+    });
+  }
+
+  function execute() {
+    $("executeBtn").disabled = true;
+    $("executeBtn").textContent = "Executing simulated remediation…";
+    $("executeStatus").textContent = "POST /api/incidents/" + state.incidentId + "/execute";
+    setStep("action", "active");
+
+    postJSON("/api/incidents/" + encodeURIComponent(state.incidentId) + "/execute", {}).then(function (res) {
+      if (!res.ok) {
+        $("executeBtn").textContent = "⚙ EXECUTE SIMULATED REMEDIATION";
+        $("executeBtn").disabled = false;
+        $("executeStatus").textContent = "Execution failed (HTTP " + res.status + "): " + (res.data.detail || "");
+        setStep("action", "blocked");
+        return;
+      }
+      onExecuted(res.data.audit_record, false);
+    }).catch(function (err) {
+      $("executeBtn").textContent = "⚙ EXECUTE SIMULATED REMEDIATION";
+      $("executeBtn").disabled = false;
+      $("executeStatus").textContent = "Network error: " + err;
+    });
+  }
+
+  function onExecuted(rec, fromAnalyze) {
+    $("actionPanel").classList.remove("locked");
+    $("actionLocked").style.display = "none";
+    $("actionBody").style.display = "block";
+    $("executeBtn").textContent = "✓ EXECUTED";
+    $("executeBtn").disabled = true;
+    $("executeStatus").className = "status-line ok";
+    $("executeStatus").textContent = fromAnalyze
+      ? "Policy cleared this action automatically (no approval required) -- executed as part of analysis."
+      : "Simulated remediation executed. No real grid control occurred.";
+
+    $("incidentState").textContent = rec.action_status;
+    renderRisk(rec.risk_after, $("riskLevel").textContent);
+
+    setStep("action", "done");
+    auditEntry("EXECUTED_SIMULATION", "action=" + (rec.proposed_action || "n/a") + " (synthetic only)");
+
+    $("verifyBody").style.display = "block";
+    $("riskBeforeVal").textContent = rec.risk_before === null || rec.risk_before === undefined ? "—" : rec.risk_before;
+    $("riskAfterVal").textContent = rec.risk_after === null || rec.risk_after === undefined ? "—" : rec.risk_after;
+    renderStateCompare("beforeStateRows", rec.before_state, rec.after_state);
+    renderStateCompare("afterStateRows", rec.after_state, rec.before_state);
+    setStep("before_after", "done");
+    auditEntry("VERIFIED", "risk " + rec.risk_before + " -> " + rec.risk_after + " (" + rec.verification_result + ")");
+
+    var badge = $("verificationBadge");
+    var result = rec.verification_result || "NO_CHANGE";
+    badge.textContent = result;
+    badge.className = "verify-badge verify-" + result;
+    setStep("verified", "done");
+
+    setStep("audit", "done");
+    $("firestoreNote").textContent = state.firestoreConfigured
+      ? "Each step above was also persisted to this project's live Firestore audit_records collection (see README, Batch 5D)."
+      : "This revision's persistence backend is LOCAL_ONLY -- this timeline reflects the live API responses for this session; it was not written to Firestore. See README (Batch 5D) for the independently live-verified Firestore run.";
+    auditEntry("AUDITED", "incident_id=" + state.incidentId);
+  }
+
+  // --- wire up -------------------------------------------------------------
+
+  renderStepper();
+  loadTechStatus();
+  resetDemo();
+
+  $("runAnalysisBtn").addEventListener("click", runAnalysis);
+  $("resetBtn").addEventListener("click", resetDemo);
+  $("approveBtn").addEventListener("click", function () { decide("approve"); });
+  $("rejectBtn").addEventListener("click", function () { decide("reject"); });
+  $("executeBtn").addEventListener("click", execute);
+  $("proveBlockedBtn").addEventListener("click", proveBlocked);
+})();
+</script>
