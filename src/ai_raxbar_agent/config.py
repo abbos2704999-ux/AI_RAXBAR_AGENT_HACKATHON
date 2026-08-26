@@ -17,7 +17,7 @@ _API_KEY_ENV_VARS = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
 
 _VERTEX_ENV_VARS = ("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION")
 
-_DEFAULT_MODEL_NAME = "gemini-2.5-flash"
+_DEFAULT_MODEL_NAME = "gemini-3.5-flash"
 
 
 def get_model_name() -> str:
@@ -34,10 +34,12 @@ def _has_api_key() -> bool:
 
 
 def _has_vertex_config() -> bool:
+    # Matches google-genai's own truthy check exactly (see
+    # google.genai._api_client.BaseApiClient.__init__), so this function
+    # never reports Vertex as ready when the real client would not agree.
     uses_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in (
-        "1",
         "true",
-        "yes",
+        "1",
     )
     return uses_vertex and all(os.environ.get(name) for name in _VERTEX_ENV_VARS)
 

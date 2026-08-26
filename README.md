@@ -107,6 +107,8 @@ action execution, no `simulate_remediation` call from the agent layer.
 - **Environment-driven config** (`config.py`) -- reads `GOOGLE_API_KEY` /
   `GEMINI_API_KEY` / Vertex AI env vars to decide whether a live Gemini call
   is even possible; no credential is ever hardcoded, logged, or printed.
+  Default model is `gemini-3.5-flash`, overridable via
+  `AI_RAXBAR_GEMINI_MODEL`.
 - **Gemini integration status: CODE_READY, NOT_VERIFIED live.** The ADK
   agent and Gemini model wiring are implemented and offline-tested against
   a scripted fake model (`tests/fakes.py::ScriptedFakeLlm`, a real

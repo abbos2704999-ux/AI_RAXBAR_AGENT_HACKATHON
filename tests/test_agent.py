@@ -83,6 +83,38 @@ def test_gemini_not_configured_by_default(monkeypatch):
     assert config.is_gemini_configured() is False
 
 
+def test_default_model_is_gemini_3_5_flash(monkeypatch):
+    monkeypatch.delenv("AI_RAXBAR_GEMINI_MODEL", raising=False)
+    assert config.get_model_name() == "gemini-3.5-flash"
+
+
+def test_model_name_env_override_still_works(monkeypatch):
+    monkeypatch.setenv("AI_RAXBAR_GEMINI_MODEL", "gemini-3.5-pro")
+    assert config.get_model_name() == "gemini-3.5-pro"
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("false", False),
+        ("0", False),
+        ("yes", False),  # not recognized by google-genai's own client -- must not be treated as truthy here either
+        ("no", False),
+        ("", False),
+    ],
+)
+def test_vertex_truthy_parsing_matches_google_genai_semantics(monkeypatch, value, expected):
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", value)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "demo-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert config.is_gemini_configured() is expected
+
+
 # ---------------------------------------------------------------------------
 # ADK agent construction / tool exposure.
 # ---------------------------------------------------------------------------
