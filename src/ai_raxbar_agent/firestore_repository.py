@@ -2,7 +2,10 @@
 
 Same interface as `local_repository.LocalRepository`, backed by real
 Google Cloud Firestore collections (`incidents`, `approvals`,
-`audit_records`) when constructed against a real client.
+`audit_records`) when constructed against a real client. Includes
+`cleanup_incident` for removing the documents a controlled synthetic
+smoke test writes (see `repository.require_demo_incident_id`) -- this is
+narrow, opt-in test cleanup, not a general or production deletion API.
 
 Safety properties:
 
@@ -30,7 +33,13 @@ from typing import Any, Optional
 
 from .audit import AuditRecord
 from .models import ApprovalState, ApprovalStatus
-from .repository import IncidentRecord, IncidentRepository, RepositoryError
+from .repository import (
+    CleanupResult,
+    IncidentRecord,
+    IncidentRepository,
+    RepositoryError,
+    require_demo_incident_id,
+)
 
 INCIDENTS_COLLECTION = "incidents"
 APPROVALS_COLLECTION = "approvals"
@@ -160,3 +169,49 @@ class FirestoreRepository(IncidentRepository):
             approver=data.get("approver"),
             reason=data.get("reason"),
         )
+
+    # -- cleanup (synthetic/demo smoke-test data only) ------------------
+
+    def cleanup_incident(self, incident_id: str) -> CleanupResult:
+        """Deletes exactly `incidents/{incident_id}`,
+        `approvals/{incident_id}`, and every `audit_records` document whose
+        `incident_id` field matches -- nothing else. Never issues a
+        collection-wide/unbounded delete: the audit-records deletion is
+        scoped by a `where("incident_id", "==", incident_id)` query, and
+        each match is deleted individually by its own document reference.
+        This is a narrow smoke-test cleanup path, not a production
+        deletion API -- `require_demo_incident_id` refuses anything that
+        doesn't look like synthetic/demo data before any delete is issued.
+        """
+        require_demo_incident_id(incident_id)
+        try:
+            incident_ref = self._client.collection(INCIDENTS_COLLECTION).document(incident_id)
+            incident_existed = incident_ref.get().exists
+            if incident_existed:
+                incident_ref.delete()
+
+            approval_ref = self._client.collection(APPROVALS_COLLECTION).document(incident_id)
+            approval_existed = approval_ref.get().exists
+            if approval_existed:
+                approval_ref.delete()
+
+            audit_records_deleted = 0
+            matches = (
+                self._client.collection(AUDIT_RECORDS_COLLECTION)
+                .where("incident_id", "==", incident_id)
+                .stream()
+            )
+            for snapshot in matches:
+                snapshot.reference.delete()
+                audit_records_deleted += 1
+
+            return CleanupResult(
+                incident_id=incident_id,
+                incident_deleted=incident_existed,
+                approval_deleted=approval_existed,
+                audit_records_deleted=audit_records_deleted,
+            )
+        except Exception as exc:  # noqa: BLE001 -- any backend failure must
+            # surface as a typed, catchable RepositoryError rather than a
+            # partial, silent cleanup.
+            raise RepositoryError(f"Failed to clean up incident {incident_id!r}: {exc}") from exc

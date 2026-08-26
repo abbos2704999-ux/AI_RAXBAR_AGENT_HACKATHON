@@ -68,10 +68,22 @@ class ScriptedFakeLlm(BaseLlm):
 
 
 class FakeFirestoreSnapshot:
-    """Structural stand-in for a Firestore `DocumentSnapshot`."""
+    """Structural stand-in for a Firestore `DocumentSnapshot`. Like the
+    real thing, carries `.id` (the document id) and `.reference` (the
+    `DocumentReference` it came from), so callers -- e.g.
+    `firestore_repository.FirestoreRepository.cleanup_incident` -- can
+    delete an exact document found via a query without reconstructing its
+    id from document content."""
 
-    def __init__(self, data: Optional[dict]) -> None:
+    def __init__(
+        self,
+        data: Optional[dict],
+        doc_id: Optional[str] = None,
+        reference: Optional["FakeFirestoreDocument"] = None,
+    ) -> None:
         self._data = data
+        self.id = doc_id
+        self.reference = reference
 
     @property
     def exists(self) -> bool:
@@ -94,7 +106,36 @@ class FakeFirestoreDocument:
 
     def get(self) -> FakeFirestoreSnapshot:
         self._collection.client.network_call_count += 1
-        return FakeFirestoreSnapshot(self._collection.docs.get(self._doc_id))
+        return FakeFirestoreSnapshot(
+            self._collection.docs.get(self._doc_id), doc_id=self._doc_id, reference=self
+        )
+
+    def delete(self) -> None:
+        self._collection.client.network_call_count += 1
+        self._collection.docs.pop(self._doc_id, None)
+
+
+class FakeFirestoreQuery:
+    """Structural stand-in for a Firestore `Query` (the object
+    `CollectionReference.where(...)` returns): supports only the single
+    equality filter this codebase actually uses."""
+
+    def __init__(self, collection: "FakeFirestoreCollection", field: str, op: str, value) -> None:
+        if op != "==":
+            raise NotImplementedError(f"FakeFirestoreQuery only supports '==', got {op!r}")
+        self._collection = collection
+        self._field = field
+        self._value = value
+
+    def stream(self) -> list[FakeFirestoreSnapshot]:
+        self._collection.client.network_call_count += 1
+        return [
+            FakeFirestoreSnapshot(
+                data, doc_id=doc_id, reference=FakeFirestoreDocument(self._collection, doc_id)
+            )
+            for doc_id, data in self._collection.docs.items()
+            if data.get(self._field) == self._value
+        ]
 
 
 class FakeFirestoreCollection:
@@ -108,9 +149,17 @@ class FakeFirestoreCollection:
     def document(self, doc_id: str) -> FakeFirestoreDocument:
         return FakeFirestoreDocument(self, doc_id)
 
+    def where(self, field: str, op: str, value) -> FakeFirestoreQuery:
+        return FakeFirestoreQuery(self, field, op, value)
+
     def stream(self) -> list[FakeFirestoreSnapshot]:
         self.client.network_call_count += 1
-        return [FakeFirestoreSnapshot(data) for data in self.docs.values()]
+        return [
+            FakeFirestoreSnapshot(
+                data, doc_id=doc_id, reference=FakeFirestoreDocument(self, doc_id)
+            )
+            for doc_id, data in self.docs.items()
+        ]
 
 
 class FakeFirestoreClient:

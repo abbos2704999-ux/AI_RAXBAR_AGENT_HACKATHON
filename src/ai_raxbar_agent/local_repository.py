@@ -13,7 +13,12 @@ from typing import Optional
 
 from .audit import AuditRecord
 from .models import ApprovalState
-from .repository import IncidentRecord, IncidentRepository
+from .repository import (
+    CleanupResult,
+    IncidentRecord,
+    IncidentRepository,
+    require_demo_incident_id,
+)
 
 
 def audit_record_key(record: AuditRecord) -> str:
@@ -61,3 +66,22 @@ class LocalRepository(IncidentRepository):
 
     def get_approval_state(self, incident_id: str) -> Optional[ApprovalState]:
         return self._approvals.get(incident_id)
+
+    def cleanup_incident(self, incident_id: str) -> CleanupResult:
+        require_demo_incident_id(incident_id)
+        with self._lock:
+            incident_deleted = self._incidents.pop(incident_id, None) is not None
+            approval_deleted = self._approvals.pop(incident_id, None) is not None
+            matching_keys = [
+                key
+                for key, record in self._audit_records.items()
+                if record.incident_id == incident_id
+            ]
+            for key in matching_keys:
+                del self._audit_records[key]
+        return CleanupResult(
+            incident_id=incident_id,
+            incident_deleted=incident_deleted,
+            approval_deleted=approval_deleted,
+            audit_records_deleted=len(matching_keys),
+        )

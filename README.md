@@ -177,6 +177,22 @@ incident/approval/audit state, without weakening any Batch 1-3 safety gate.
   automatically. **No live Firestore call has been made from this
   repository; nothing here should be read as `LIVE_FIRESTORE_VERIFIED`.**
   Suggested/used collections: `incidents`, `approvals`, `audit_records`.
+- **Controlled synthetic smoke-test cleanup** (`cleanup_incident`, part of
+  the `IncidentRepository` interface) -- a narrow, opt-in method that
+  deletes exactly one incident's `incidents`/`approvals` documents plus
+  every `audit_records` entry for that `incident_id`, and nothing else.
+  This exists solely so a future live Firestore smoke test can remove the
+  handful of documents it writes; **it is not a general-purpose or
+  production deletion API.** Every implementation calls
+  `repository.require_demo_incident_id()` first and refuses any
+  `incident_id` that doesn't start with an explicit synthetic/demo marker
+  (`HACKATHON-SMOKE-` or `DEMO-`, optionally after the orchestrator's
+  `INC-` prefix) before deleting anything. The Firestore adapter scopes the
+  audit-records deletion with a `where("incident_id", "==", ...)` query and
+  deletes each match by its own document reference -- never a
+  collection-wide/unbounded delete. Cleanup is idempotent: calling it again
+  on an already-cleaned-up `incident_id` returns all-False/zero rather than
+  raising.
 - **Fail-closed persistence** -- `execute_action` persists the incident and
   approval state *before* checking the policy gate or calling
   `simulate_remediation`. A `RepositoryError` raised during either save
@@ -193,11 +209,13 @@ incident/approval/audit state, without weakening any Batch 1-3 safety gate.
   field `agent.propose_incident_analysis` defines); this codebase never
   captures raw model chain-of-thought anywhere, so there is nothing else to
   leak into storage.
-- Offline tests (`tests/test_repository.py`) cover incident/approval/audit
-  persistence, ordered workflow state, idempotent retries, rejection
-  persisting without executing, `HIGH_IMPACT` staying blocked pre-approval,
-  fail-closed behavior on a simulated persistence outage, and the Firestore
-  adapter's structural compatibility against a fake client
+- Offline tests (`tests/test_repository.py`, 40 total) cover
+  incident/approval/audit persistence, ordered workflow state, idempotent
+  retries, rejection persisting without executing, `HIGH_IMPACT` staying
+  blocked pre-approval, fail-closed behavior on a simulated persistence
+  outage, `cleanup_incident`'s demo-id guard/idempotency/unrelated-data
+  isolation/backend-failure handling, and the Firestore adapter's
+  structural compatibility against a fake client
   (`tests/fakes.py::FakeFirestoreClient`) with zero network access.
 
 ### Not yet implemented (NEXT / Batch 5+)

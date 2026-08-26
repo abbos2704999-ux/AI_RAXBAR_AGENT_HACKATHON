@@ -76,6 +76,57 @@ class IncidentRecord:
         }
 
 
+_DEMO_CLEANUP_PREFIXES = ("HACKATHON-SMOKE-", "DEMO-")
+
+
+class CleanupNotAllowedError(ValueError):
+    """Raised when `cleanup_incident` is asked to delete an `incident_id`
+    that doesn't look like synthetic/demo data.
+
+    `cleanup_incident` is a narrow, opt-in path for removing the handful of
+    documents a controlled Firestore smoke test writes -- it is not, and
+    must never become, a general production deletion mechanism. Refusing
+    anything that doesn't obviously look disposable is the whole point.
+    """
+
+
+def is_demo_incident_id(incident_id: str) -> bool:
+    """True if `incident_id` looks like synthetic/demo data safe for
+    `cleanup_incident` to delete: it (optionally after the orchestrator's
+    `INC-` prefix, e.g. `INC-DEMO-TP-007-a1b2c3d4`) starts with an explicit
+    demo/smoke-test marker such as `HACKATHON-SMOKE-` or `DEMO-`. Anything
+    else is refused."""
+    if not isinstance(incident_id, str) or not incident_id:
+        return False
+    candidate = incident_id[len("INC-") :] if incident_id.startswith("INC-") else incident_id
+    return any(candidate.startswith(prefix) for prefix in _DEMO_CLEANUP_PREFIXES)
+
+
+def require_demo_incident_id(incident_id: str) -> None:
+    """Raises `CleanupNotAllowedError` unless `is_demo_incident_id` is
+    True. Every `cleanup_incident` implementation must call this before
+    touching any storage backend."""
+    if not is_demo_incident_id(incident_id):
+        raise CleanupNotAllowedError(
+            f"Refusing to clean up {incident_id!r}: cleanup_incident only "
+            f"accepts synthetic/demo incident_ids starting with one of "
+            f"{_DEMO_CLEANUP_PREFIXES!r} (optionally after an 'INC-' "
+            "prefix). This is not a production deletion mechanism."
+        )
+
+
+@dataclass
+class CleanupResult:
+    """What `cleanup_incident` actually removed. All-False/zero on a
+    second call for the same `incident_id` -- cleanup is idempotent, not
+    an error, to delete something that's already gone."""
+
+    incident_id: str
+    incident_deleted: bool
+    approval_deleted: bool
+    audit_records_deleted: int
+
+
 class RepositoryError(RuntimeError):
     """Raised by a repository implementation when a save/read fails.
 
@@ -111,3 +162,18 @@ class IncidentRepository(ABC):
 
     @abstractmethod
     def get_approval_state(self, incident_id: str) -> Optional[ApprovalState]: ...
+
+    @abstractmethod
+    def cleanup_incident(self, incident_id: str) -> CleanupResult:
+        """Narrow, opt-in deletion of exactly one incident's data --
+        `incidents/{incident_id}`, `approvals/{incident_id}`, and every
+        `audit_records` entry whose `incident_id` matches. Every
+        implementation MUST call `require_demo_incident_id(incident_id)`
+        before deleting anything, MUST scope every delete to that exact
+        `incident_id` (no collection-wide/unbounded delete), and MUST be
+        safe to call again on an already-cleaned-up incident_id (returns
+        all-False/zero, does not raise). This exists only for controlled
+        synthetic smoke-test cleanup -- it is not a general-purpose or
+        production deletion API.
+        """
+        ...

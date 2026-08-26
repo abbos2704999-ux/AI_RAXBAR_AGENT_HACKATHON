@@ -27,7 +27,13 @@ from ai_raxbar_agent.firestore_repository import FirestoreRepository
 from ai_raxbar_agent.local_repository import LocalRepository
 from ai_raxbar_agent.models import ApprovalState, ApprovalStatus, ImpactClass, RiskLevel
 from ai_raxbar_agent.orchestrator import ExecutionBlockedError, IncidentProposal
-from ai_raxbar_agent.repository import IncidentRecord, IncidentRepository, RepositoryError
+from ai_raxbar_agent.repository import (
+    CleanupNotAllowedError,
+    CleanupResult,
+    IncidentRecord,
+    IncidentRepository,
+    RepositoryError,
+)
 
 from fakes import FakeFirestoreClient, ScriptedFakeLlm
 
@@ -128,6 +134,10 @@ class FailingRepository(IncidentRepository):
     def get_approval_state(self, incident_id: str):
         self._maybe_fail("get_approval_state")
         return self._delegate.get_approval_state(incident_id)
+
+    def cleanup_incident(self, incident_id: str) -> CleanupResult:
+        self._maybe_fail("cleanup_incident")
+        return self._delegate.cleanup_incident(incident_id)
 
 
 # ---------------------------------------------------------------------------
@@ -553,3 +563,262 @@ def test_no_network_import_in_persistence_modules():
                     assert alias.name not in disallowed, f"{name} imports {alias.name}"
             elif isinstance(node, ast.ImportFrom):
                 assert node.module not in disallowed, f"{name} imports {node.module}"
+
+
+# ---------------------------------------------------------------------------
+# cleanup_incident: narrow synthetic smoke-test cleanup only.
+# ---------------------------------------------------------------------------
+
+
+def _seed_two_incidents(repo, incident_id_a: str, incident_id_b: str):
+    """Runs the full DEMO-TP-007 approve+execute workflow for two distinct
+    incident_ids against the same repository, so tests can prove cleanup
+    of one leaves the other untouched."""
+    result = _mocked_incident_analysis("DEMO-TP-007", "REBALANCE_LOAD")
+    proposal = _proposal_from_analysis(result)
+    for incident_id in (incident_id_a, incident_id_b):
+        pending = approval.request_approval()
+        with pytest.raises(ExecutionBlockedError):
+            orchestrator.execute_action(
+                proposal, pending, incident_id=incident_id, repository=repo
+            )
+        approved = approval.approve(pending, approver="demo-operator")
+        orchestrator.execute_action(
+            proposal, approved, incident_id=incident_id, repository=repo
+        )
+
+
+@pytest.mark.parametrize(
+    "repo_factory",
+    [
+        lambda: LocalRepository(),
+        lambda: FirestoreRepository(FakeFirestoreClient()),
+    ],
+    ids=["local", "firestore-fake"],
+)
+def test_cleanup_incident_removes_incident_approval_and_audit_records(repo_factory):
+    store.reset()
+    repo = repo_factory()
+    incident_id = "HACKATHON-SMOKE-001"
+    _seed_two_incidents(repo, incident_id, "HACKATHON-SMOKE-999")
+
+    # Sanity: data actually exists before cleanup.
+    assert repo.get_incident(incident_id) is not None
+    assert repo.get_approval_state(incident_id) is not None
+    assert repo.list_audit_records(incident_id)
+
+    result = repo.cleanup_incident(incident_id)
+
+    assert isinstance(result, CleanupResult)
+    assert result.incident_id == incident_id
+    assert result.incident_deleted is True
+    assert result.approval_deleted is True
+    assert result.audit_records_deleted == 2  # BLOCKED_PENDING_APPROVAL + EXECUTED
+
+    assert repo.get_incident(incident_id) is None
+    assert repo.get_approval_state(incident_id) is None
+    assert repo.list_audit_records(incident_id) == []
+    store.reset()
+
+
+@pytest.mark.parametrize(
+    "repo_factory",
+    [
+        lambda: LocalRepository(),
+        lambda: FirestoreRepository(FakeFirestoreClient()),
+    ],
+    ids=["local", "firestore-fake"],
+)
+def test_cleanup_incident_leaves_unrelated_incident_and_audit_records_intact(repo_factory):
+    store.reset()
+    repo = repo_factory()
+    target_id = "HACKATHON-SMOKE-002"
+    other_id = "HACKATHON-SMOKE-003"
+    _seed_two_incidents(repo, target_id, other_id)
+
+    repo.cleanup_incident(target_id)
+
+    assert repo.get_incident(target_id) is None
+    assert repo.get_approval_state(target_id) is None
+    assert repo.list_audit_records(target_id) == []
+
+    # The other incident's data must be completely untouched.
+    other_incident = repo.get_incident(other_id)
+    assert other_incident is not None
+    assert other_incident.action_status == "EXECUTED"
+    assert repo.get_approval_state(other_id) is not None
+    other_audit = repo.list_audit_records(other_id)
+    assert len(other_audit) == 2
+    assert {r.action_status for r in other_audit} == {
+        "BLOCKED_PENDING_APPROVAL",
+        "EXECUTED",
+    }
+    store.reset()
+
+
+@pytest.mark.parametrize(
+    "repo_factory",
+    [
+        lambda: LocalRepository(),
+        lambda: FirestoreRepository(FakeFirestoreClient()),
+    ],
+    ids=["local", "firestore-fake"],
+)
+def test_cleanup_incident_is_idempotent(repo_factory):
+    store.reset()
+    repo = repo_factory()
+    incident_id = "HACKATHON-SMOKE-004"
+    _seed_two_incidents(repo, incident_id, "HACKATHON-SMOKE-005")
+
+    first = repo.cleanup_incident(incident_id)
+    assert first.incident_deleted is True
+    assert first.approval_deleted is True
+    assert first.audit_records_deleted == 2
+
+    # Second call on an already-cleaned-up incident_id: no error, nothing
+    # left to delete.
+    second = repo.cleanup_incident(incident_id)
+    assert second.incident_deleted is False
+    assert second.approval_deleted is False
+    assert second.audit_records_deleted == 0
+    store.reset()
+
+
+@pytest.mark.parametrize(
+    "bad_incident_id",
+    [
+        "PROD-INC-12345",
+        "TP-00931",
+        "incident-1",
+        "",
+        "hackathon-smoke-001",  # case-sensitive: lowercase must not match
+        "SMOKE-001",  # missing the HACKATHON- prefix
+    ],
+)
+def test_cleanup_incident_rejects_non_demo_ids(bad_incident_id):
+    repo = LocalRepository()
+    with pytest.raises(CleanupNotAllowedError):
+        repo.cleanup_incident(bad_incident_id)
+
+
+def test_cleanup_incident_rejects_non_demo_id_for_firestore_repository_without_any_call():
+    client = FakeFirestoreClient()
+    repo = FirestoreRepository(client)
+    calls_before = client.network_call_count
+    with pytest.raises(CleanupNotAllowedError):
+        repo.cleanup_incident("PROD-INC-12345")
+    # The guard must reject before touching the backend at all.
+    assert client.network_call_count == calls_before
+
+
+@pytest.mark.parametrize(
+    "good_incident_id",
+    [
+        "HACKATHON-SMOKE-001",
+        "DEMO-TP-999",
+        "INC-DEMO-TP-007-abcd1234",  # orchestrator's real new_incident_id() shape
+        "INC-HACKATHON-SMOKE-001-abcd1234",
+    ],
+)
+def test_demo_incident_id_guard_accepts_expected_shapes(good_incident_id):
+    from ai_raxbar_agent.repository import is_demo_incident_id
+
+    assert is_demo_incident_id(good_incident_id) is True
+
+
+def test_cleanup_incident_backend_failure_fails_safely():
+    class BrokenDocument:
+        def get(self):
+            raise RuntimeError("boom")
+
+    class BrokenCollection:
+        def document(self, doc_id):
+            return BrokenDocument()
+
+        def where(self, field, op, value):
+            raise RuntimeError("boom")
+
+        def stream(self):
+            raise RuntimeError("boom")
+
+    class BrokenClient:
+        def collection(self, name):
+            return BrokenCollection()
+
+    repo = FirestoreRepository(BrokenClient())
+    with pytest.raises(RepositoryError):
+        repo.cleanup_incident("HACKATHON-SMOKE-BROKEN")
+
+
+def test_cleanup_incident_never_calls_unbounded_collection_scan_on_firestore():
+    # The audit-records deletion path must use a scoped where() query, not
+    # a bare collection-wide stream(): a query-less BrokenCollection.stream
+    # that raises proves cleanup_incident never falls back to it.
+    class ScopedOnlyCollection:
+        def __init__(self):
+            self.docs: dict[str, dict] = {}
+
+        def document(self, doc_id):
+            class _Doc:
+                def get(self_inner):
+                    return type("Snap", (), {"exists": False})()
+
+                def delete(self_inner):
+                    pass
+
+            return _Doc()
+
+        def where(self, field, op, value):
+            class _Query:
+                def stream(self_inner):
+                    return []
+
+            return _Query()
+
+        def stream(self):
+            raise AssertionError(
+                "cleanup_incident must not call the unscoped collection "
+                "stream() for audit_records -- it must use where()"
+            )
+
+    class ScopedOnlyClient:
+        def __init__(self):
+            self._incidents = ScopedOnlyCollection()
+            self._approvals = ScopedOnlyCollection()
+            self._audit = ScopedOnlyCollection()
+
+        def collection(self, name):
+            return {
+                "incidents": self._incidents,
+                "approvals": self._approvals,
+                "audit_records": self._audit,
+            }[name]
+
+    repo = FirestoreRepository(ScopedOnlyClient())
+    result = repo.cleanup_incident("HACKATHON-SMOKE-SCOPED")
+    assert result.audit_records_deleted == 0
+
+
+def test_incident_repository_interface_requires_cleanup_incident():
+    with pytest.raises(TypeError):
+
+        class IncompleteRepository(IncidentRepository):
+            def save_incident(self, incident):
+                pass
+
+            def get_incident(self, incident_id):
+                pass
+
+            def save_audit_record(self, record):
+                pass
+
+            def list_audit_records(self, incident_id=None):
+                pass
+
+            def save_approval_state(self, incident_id, approval):
+                pass
+
+            def get_approval_state(self, incident_id):
+                pass
+
+        IncompleteRepository()  # abstract cleanup_incident never implemented
