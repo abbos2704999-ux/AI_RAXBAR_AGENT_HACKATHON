@@ -196,15 +196,25 @@ def test_evidence_panel_data_present_even_for_low_impact_auto_executed_action(cl
 # (see README/session notes) found this was NOT a UI/API field-mapping bug:
 # the live Cloud Run process's in-memory `data_store` still held DEMO-TP-007
 # in its post-remediation state from an earlier live `/execute` call in the
-# same running instance (nothing resets it between separate demo runs), and
+# same running instance (nothing reset it between separate demo runs), and
 # a live Gemini 429 (daily free-tier quota) independently emptied the
 # diagnosis/recommended_action for that particular call. These tests pin
 # down, offline, that (a) every field the demo page reads really is present
 # with the exact name in both the analyze and execute responses, (b)
 # risk_before/risk_after are unknown until execute and correct once it
-# happens, and (c) `data_store.store.reset()` -- the mechanism that must run
-# before a "fresh" demo pass -- genuinely discards a prior execution's
-# mutation rather than silently preserving it.
+# happens, and (c) `data_store.store.reset()` -- the mechanism a "fresh"
+# demo pass depends on -- genuinely discards a prior execution's mutation
+# rather than silently preserving it.
+#
+# Follow-up fix: `data_store.store.reset()` existed and worked (proven
+# below) but nothing HTTP-reachable ever called it -- the "RESET DEMO"
+# button (`resetDemo()` in demo.html) only cleared browser/UI state. The fix
+# adds `POST /api/assets/{asset_id}/reset` (see `web.py`) and wires
+# `resetDemo()` to call it, so a judge's reset click now discards the
+# backend mutation too, not just the on-screen panels. See
+# tests/test_web.py for the HTTP-level before/after coverage of this fix,
+# and `test_reset_demo_button_calls_backend_reset_endpoint` below for the
+# static JS-wiring check.
 # ---------------------------------------------------------------------------
 
 
@@ -325,3 +335,27 @@ def test_store_reset_discards_stale_post_execution_state():
     assert fresh.risk_level.value == "CRITICAL"
     assert "overload_critical" in fresh.risk_factors
     assert store.get_asset("DEMO-TP-007").load_ratio == 1.3
+
+
+def test_reset_demo_button_calls_backend_reset_endpoint():
+    """Static JS-wiring check: `resetDemo()` must actually call the new
+    `POST /api/assets/{ASSET_ID}/reset` endpoint, not just clear on-screen
+    panels -- this is what makes the fix above reachable from the "RESET
+    DEMO" button a judge clicks, instead of only from a direct Python call
+    to `store.reset()`."""
+    body = (web._STATIC_DIR / "demo.html").read_text(encoding="utf-8")  # noqa: SLF001
+
+    reset_fn_match = re.search(r"function resetDemo\(\)\s*\{(.*?)\n  \}", body, re.DOTALL)
+    assert reset_fn_match, "resetDemo() function not found in demo.html"
+    reset_fn_body = reset_fn_match.group(1)
+    assert "resetBackendAssetState" in reset_fn_body, (
+        "resetDemo() no longer calls a backend reset -- the RESET DEMO button "
+        "would silently go back to clearing UI state only."
+    )
+
+    backend_fn_match = re.search(
+        r"function resetBackendAssetState\(\)\s*\{(.*?)\n  \}", body, re.DOTALL
+    )
+    assert backend_fn_match, "resetBackendAssetState() function not found in demo.html"
+    backend_fn_body = backend_fn_match.group(1)
+    assert '"/api/assets/" + ASSET_ID + "/reset"' in backend_fn_body

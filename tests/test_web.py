@@ -222,3 +222,78 @@ def test_default_backend_is_local(client):
     # offline repository; confirms no accidental Firestore wiring.
     resp = client.get("/api/status")
     assert resp.json()["firestore_integration"] == "LOCAL_ONLY"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/assets/{asset_id}/reset -- fixes the live-demo state-drift bug
+# where a prior execute's mutation silently carried over into the next
+# analyze because nothing reset the backend's in-memory data_store between
+# demo runs (see the Batch 5G comment block in tests/test_demo_ui.py).
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_after_prior_execute_without_reset_reuses_mutated_state(client):
+    """Pins down the pre-fix bug this endpoint exists to fix: without an
+    intervening reset, a second analyze/execute cycle on the same asset
+    starts from the first cycle's mutated state, not the canonical
+    baseline -- proving the drift is real at the HTTP layer, not just in
+    the data-store unit test."""
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    first = client.post("/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"}).json()
+    assert first["analysis"]["risk_score"] == 100
+    incident_id = first["incident_id"]
+    client.post(
+        f"/api/incidents/{incident_id}/approve",
+        json={"approver": "demo-operator", "reason": "evidence verified"},
+    )
+    client.post(f"/api/incidents/{incident_id}/execute")
+
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    second = client.post("/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"}).json()
+    assert second["analysis"]["risk_score"] != 100  # drifted, not canonical baseline
+
+
+def test_reset_asset_endpoint_restores_canonical_baseline_after_execute(client):
+    # The autouse fixture already reset the store, so this is the canonical
+    # on-disk baseline snapshot before any mutation in this test.
+    baseline = store.get_asset("DEMO-TP-007").signal_snapshot()
+
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    first = client.post("/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"}).json()
+    incident_id = first["incident_id"]
+    client.post(
+        f"/api/incidents/{incident_id}/approve",
+        json={"approver": "demo-operator", "reason": "evidence verified"},
+    )
+    client.post(f"/api/incidents/{incident_id}/execute")
+    assert store.get_asset("DEMO-TP-007").signal_snapshot() != baseline
+
+    reset_resp = client.post("/api/assets/DEMO-TP-007/reset")
+    assert reset_resp.status_code == 200
+    body = reset_resp.json()
+    assert body["asset_id"] == "DEMO-TP-007"
+    assert body["risk_score"] == 100
+    assert body["risk_level"] == "CRITICAL"
+    assert store.get_asset("DEMO-TP-007").signal_snapshot() == baseline
+
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    second = client.post("/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"}).json()
+    assert second["analysis"]["risk_score"] == 100  # fresh cycle, canonical baseline again
+
+
+def test_reset_asset_endpoint_rejects_non_synthetic_asset_id(client):
+    resp = client.post("/api/assets/PROD-FEEDER-1/reset")
+    assert resp.status_code == 400
+    assert "synthetic" in resp.json()["detail"].lower()
+
+
+def test_reset_asset_endpoint_rejects_unknown_demo_asset_id(client):
+    resp = client.post("/api/assets/DEMO-TP-999/reset")
+    assert resp.status_code == 404
+
+
+def test_reset_asset_endpoint_is_idempotent(client):
+    first = client.post("/api/assets/DEMO-TP-007/reset")
+    second = client.post("/api/assets/DEMO-TP-007/reset")
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()

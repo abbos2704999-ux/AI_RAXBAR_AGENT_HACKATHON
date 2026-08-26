@@ -25,6 +25,10 @@ Safety boundary:
   identity, never a service-account JSON file. If that construction fails,
   the request fails closed (503); nothing here silently falls back to the
   local in-memory repository.
+- `POST /api/assets/{asset_id}/reset` restores the in-memory synthetic
+  asset store to its on-disk baseline (`data_store.store.reset()`). It
+  never touches Gemini, Firestore, or a real device -- it only discards a
+  prior `simulate_remediation` mutation.
 """
 
 from __future__ import annotations
@@ -345,6 +349,35 @@ def create_app() -> FastAPI:
             },
             "audit_record": _audit_record_to_dict(record),
             "blocked": blocked,
+        }
+
+    @app.post("/api/assets/{asset_id}/reset")
+    def reset_asset(asset_id: str) -> dict:
+        # Restores every synthetic asset's in-memory signal state to the
+        # on-disk baseline (`data_store.DataStore.reset()`), discarding any
+        # mutation left behind by a prior `simulate_remediation` call in
+        # this running process. This is the fix for the drift `resetDemo()`
+        # in demo.html could not previously address: that function only
+        # ever cleared browser/UI state, never the backend's mutable
+        # `data_store.store` singleton, so repeated analyze/execute cycles
+        # against the same asset compounded instead of starting fresh. See
+        # tests/test_demo_ui.py::test_store_reset_discards_stale_post_execution_state
+        # for the underlying data-layer guarantee this endpoint exposes.
+        _require_synthetic_id(asset_id, kind="asset_id")
+
+        try:
+            store.get_asset(asset_id)
+        except AssetNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        store.reset()
+
+        risk = batch1_tools.get_risk_evidence(asset_id)
+        return {
+            "asset_id": asset_id,
+            "asset_state": store.get_asset(asset_id).signal_snapshot(),
+            "risk_score": risk.risk_score,
+            "risk_level": risk.risk_level.value,
         }
 
     @app.post("/api/incidents/{incident_id}/approve")

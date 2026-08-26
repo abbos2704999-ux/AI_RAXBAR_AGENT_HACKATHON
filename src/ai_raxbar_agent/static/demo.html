@@ -772,6 +772,33 @@
     $("auditTimeline").innerHTML = "";
     $("auditLocked").style.display = "block";
     $("firestoreNote").textContent = "";
+
+    resetBackendAssetState();
+  }
+
+  function resetBackendAssetState() {
+    // UI state above is cleared synchronously and immediately. This call
+    // additionally discards any synthetic-state mutation a prior
+    // analyze->approve->execute cycle left behind in the backend's
+    // in-memory asset store (data_store.store), so a "fresh" demo run
+    // actually starts from the canonical baseline (risk 100/CRITICAL for
+    // DEMO-TP-007) instead of silently inheriting a previous run's
+    // partially-remediated state.
+    var btn = $("resetBtn");
+    btn.disabled = true;
+    postJSON("/api/assets/" + ASSET_ID + "/reset", {})
+      .then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) {
+          $("analysisStatus").textContent = "Backend reset failed (" + res.status + ") -- synthetic state may be stale.";
+          $("analysisStatus").className = "status-line error";
+        }
+      })
+      .catch(function () {
+        btn.disabled = false;
+        $("analysisStatus").textContent = "Backend reset request failed -- synthetic state may be stale.";
+        $("analysisStatus").className = "status-line error";
+      });
   }
 
   function runAnalysis() {
