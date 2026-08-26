@@ -109,21 +109,104 @@ action execution, no `simulate_remediation` call from the agent layer.
   is even possible; no credential is ever hardcoded, logged, or printed.
   Default model is `gemini-3.5-flash`, overridable via
   `AI_RAXBAR_GEMINI_MODEL`.
-- **Gemini integration status: CODE_READY, NOT_VERIFIED live.** The ADK
-  agent and Gemini model wiring are implemented and offline-tested against
-  a scripted fake model (`tests/fakes.py::ScriptedFakeLlm`, a real
+- **Gemini integration status: CODE_READY, LIVE_ATTEMPTED_NOT_VERIFIED.**
+  The ADK agent and Gemini model wiring are implemented and offline-tested
+  against a scripted fake model (`tests/fakes.py::ScriptedFakeLlm`, a real
   `google.adk` `BaseLlm` subclass driving the real tool-calling loop with no
-  network access). No live Gemini API call has been made from this
-  repository. `scripts/smoke_test_gemini.py` is an explicit, opt-in,
-  human-run command (`--yes` required) for a single live smoke test once
-  credentials are configured; nothing runs it automatically.
+  network access). Two controlled, opt-in live smoke-test attempts
+  (`scripts/smoke_test_gemini.py --yes`) have reached the real Gemini API;
+  both returned an upstream `503 UNAVAILABLE` ("high demand") error rather
+  than a successful response, so a live call has been *attempted* but not
+  yet *verified end-to-end*. `scripts/smoke_test_gemini.py` remains an
+  explicit, opt-in, human-run command (`--yes` required); nothing in this
+  repository runs it automatically or retries it on its own.
 
-### Not yet implemented (NEXT / Batch 3+)
+## Current scope: Batch 3
 
-- A real human-approval UI/workflow wired to `WAIT_FOR_HUMAN_APPROVAL`.
-- Automatic invocation of `simulate_remediation` after approval.
-- Google Cloud (Cloud Run, Firestore, or any other GCP service).
-- Any production write path or live Gemini verification.
+Batch 3 adds human approval, a controlled synthetic action executor, and an
+audit trail on top of Batch 2's policy gate, completing the full target
+loop:
+
+```
+OBSERVE -> DETECT -> DIAGNOSE -> PLAN -> POLICY GATE -> HUMAN APPROVAL
+        -> ACT (SIMULATED) -> VERIFY -> AUDIT
+```
+
+- **Human-approval state machine** (`approval.py`) -- every request starts
+  `PENDING`; only an explicit `approve()`/`reject()` call (with a required
+  approver identity) moves it to `APPROVED`/`REJECTED`. A request cannot be
+  approved once `REJECTED`.
+- **Controlled action executor** (`orchestrator.execute_action`) -- the one
+  entry point from an `IncidentProposal` + `ApprovalState` to a synthetic
+  action. It re-derives the policy decision independently from
+  `policy.py` and refuses a `HIGH_IMPACT` action without `APPROVED` *before*
+  ever calling `tools.simulate_remediation` -- which enforces the identical
+  rule again on its own, so there is no code path that bypasses approval.
+- **Verification** -- unchanged from Batch 1: risk is recomputed
+  deterministically before/after, and the before/after state + risk +
+  `PASS`/`FAIL` outcome are captured on every executed action.
+- **Audit trail** (`audit.py`) -- an offline, in-memory, JSON-serializable
+  `AuditRecord`/`AuditTrail` shaped like a future persisted document. Every
+  outcome (blocked, rejected, executed, failed) is recorded, not just
+  successes.
+
+## Current scope: Batch 4
+
+Batch 4 adds a **Firestore-ready persistence boundary** for the same
+incident/approval/audit state, without weakening any Batch 1-3 safety gate.
+
+- **Persistence interface** (`repository.py`) -- `IncidentRepository`, an
+  ABC with `save_incident` / `get_incident` / `save_audit_record` /
+  `list_audit_records` / `save_approval_state` / `get_approval_state`.
+  `orchestrator.execute_action` depends only on this interface, never on a
+  concrete storage SDK.
+- **Local/offline implementation** (`local_repository.py`) --
+  `LocalRepository`, in-memory, no credentials, no network. This is the
+  default repository `execute_action` uses unless a caller passes a
+  different one, and what every offline test runs against.
+- **Firestore-ready adapter** (`firestore_repository.py`) --
+  `FirestoreRepository` implements the same interface against any client
+  exposing Firestore's `collection().document().set()/get()` /
+  `collection().stream()` surface (a real `google.cloud.firestore.Client`
+  or a fake). The module never imports `google.cloud.firestore` at import
+  time and never constructs a client itself; `build_live_client()` is a
+  separate, explicit, human-invoked function (mirroring
+  `scripts/smoke_test_gemini.py`'s posture) that lazily imports the SDK and
+  builds a client from standard Google Cloud credentials (Application
+  Default Credentials / environment) -- nothing in this repository calls it
+  automatically. **No live Firestore call has been made from this
+  repository; nothing here should be read as `LIVE_FIRESTORE_VERIFIED`.**
+  Suggested/used collections: `incidents`, `approvals`, `audit_records`.
+- **Fail-closed persistence** -- `execute_action` persists the incident and
+  approval state *before* checking the policy gate or calling
+  `simulate_remediation`. A `RepositoryError` raised during either save
+  therefore aborts the call before the write tool is ever reached: a
+  storage failure can only ever block an action, never let one through.
+- **Idempotency** -- re-saving the same `incident_id` preserves its
+  original `created_at` (an update, not a duplicate); audit records are
+  keyed by `incident_id::action_status`, so retrying the same lifecycle
+  stage overwrites in place while a genuinely new stage (e.g.
+  `BLOCKED_PENDING_APPROVAL` -> `EXECUTED`) still gets its own record,
+  preserving full history without uncontrolled duplication.
+- **No chain-of-thought persisted** -- the persisted `IncidentRecord`
+  carries only the model's concise, user-facing `diagnosis` text (the same
+  field `agent.propose_incident_analysis` defines); this codebase never
+  captures raw model chain-of-thought anywhere, so there is nothing else to
+  leak into storage.
+- Offline tests (`tests/test_repository.py`) cover incident/approval/audit
+  persistence, ordered workflow state, idempotent retries, rejection
+  persisting without executing, `HIGH_IMPACT` staying blocked pre-approval,
+  fail-closed behavior on a simulated persistence outage, and the Firestore
+  adapter's structural compatibility against a fake client
+  (`tests/fakes.py::FakeFirestoreClient`) with zero network access.
+
+### Not yet implemented (NEXT / Batch 5+)
+
+- Live, successful Gemini verification (two attempts so far both hit an
+  upstream `503`; not yet retried).
+- A live Firestore connection/verification against a real GCP project.
+- Any Cloud Run deployment or other live GCP service.
+- Any production write path.
 
 ## Pre-existing vs. new work
 
@@ -144,7 +227,9 @@ pytest
 All tests are offline and deterministic -- no network access is required or
 used, including the Batch 2 agent tests (`tests/test_agent.py`), which run
 the real `google.adk` agent/tool-calling loop against a scripted fake model
-instead of live Gemini.
+instead of live Gemini, and the Batch 4 persistence tests
+(`tests/test_repository.py`), which exercise the Firestore-shaped adapter
+against `tests/fakes.py::FakeFirestoreClient` instead of live Firestore.
 
 To try a real, opt-in, single live Gemini call once you have
 `GOOGLE_API_KEY` or `GEMINI_API_KEY` set in your environment:

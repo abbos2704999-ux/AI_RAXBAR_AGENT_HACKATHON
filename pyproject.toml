@@ -16,6 +16,13 @@ dependencies = []
 # agent layer, which is why they live in optional extras rather than
 # `dependencies`.
 agent = ["google-adk>=1.0.0", "google-genai>=1.0.0"]
+# Batch 4 persistence adapter: only needed to construct a real
+# `firestore_repository.build_live_client()` against actual Google Cloud
+# Firestore. Not required to import/use `firestore_repository.py` itself
+# (that module lazy-imports this package only inside `build_live_client`),
+# and not required by the offline test suite, which exercises the adapter
+# against `tests/fakes.py::FakeFirestoreClient` instead.
+firestore = ["google-cloud-firestore>=2.0.0"]
 dev = ["pytest>=7.0", "google-adk>=1.0.0", "google-genai>=1.0.0"]
 
 [tool.setuptools.packages.find]
