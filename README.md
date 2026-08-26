@@ -44,7 +44,9 @@ a policy decision, or execute an action the policy gate blocks.
 | Simulated action + verification   | IMPLEMENTED               |
 | Cloud Run-ready HTTP service       | IMPLEMENTED               |
 | Docker/container configuration    | IMPLEMENTED               |
-| Cloud Run deployment              | LIVE_VERIFIED (health/status) |
+| Cloud Run deployment              | LIVE_VERIFIED              |
+| Gemini 3.5 Flash through Cloud Run | LIVE_VERIFIED             |
+| Google ADK tool calling through Cloud Run | LIVE_VERIFIED      |
 
 See "Live Verification Evidence" below for what each `LIVE_VERIFIED` status
 is based on.
@@ -341,10 +343,64 @@ that batch -- no repository code changed to make this deployment work.
   cover: Gemini isn't configured on it, so the call would only ever return
   `503` -- there is nothing to safely verify there yet.
 
-**Cloud Run deployment status: LIVE_VERIFIED for `/health` and
-`/api/status` only.** A live `/api/incidents/analyze` call against the
-deployed service (with Gemini credentials wired in, e.g. via Secret
-Manager per `docs/CLOUD_RUN_DEPLOYMENT.md`) remains a follow-up batch.
+**Cloud Run deployment status (as of Batch 5B): LIVE_VERIFIED for
+`/health` and `/api/status` only.** A live `/api/incidents/analyze` call
+against the deployed service required a Gemini credential wired in first --
+see "Current scope: Batch 5C" below for that follow-up.
+
+## Current scope: Batch 5C
+
+Batch 5C securely connects Gemini to the already-deployed Cloud Run
+service and performs one hosted synthetic analysis, without touching
+Firestore and without changing any source file.
+
+- **Gemini credential via Secret Manager** -- the existing local Gemini API
+  key was added, without ever being printed or logged, as one version of a
+  narrowly named secret (`ai-raxbar-gemini-api-key`) in Google Secret
+  Manager. It was never placed in source code, the Docker image, git, this
+  README, or a Cloud Run command-line env value.
+- **Least-privilege access** -- the existing Cloud Run runtime service
+  identity was granted `roles/secretmanager.secretAccessor` scoped to only
+  that one secret -- no project-level or broader IAM role.
+- **Same service, new revision** -- `ai-raxbar-agent` (unchanged name,
+  unchanged region `us-central1`, unchanged public demo access, unchanged
+  synthetic-only boundary) was updated, not replaced, to mount that secret
+  as the `GEMINI_API_KEY` environment variable `config.py` already reads.
+  Firestore was deliberately left unconfigured on this revision -- it
+  remains `local`/offline only.
+- **One hosted, live, end-to-end analysis performed** -- a single
+  `POST /api/incidents/analyze` call for synthetic asset `DEMO-TP-007`
+  against the live Cloud Run URL exercised the full chain: Cloud Run ->
+  Google ADK -> Gemini 3.5 Flash -> the same deterministic evidence tools
+  and risk engine as every other batch -> the deterministic policy gate.
+  Confirmed from that one response: risk was deterministic and tool-owned
+  (`risk_score = 100`, `risk_level = CRITICAL`, matching the known
+  `DEMO-TP-007` baseline, not anything the model asserted), all 14
+  evidence refs it returned were valid/real (not hallucinated), the
+  diagnosis was genuine live-model free text, `recommended_action =
+  REBALANCE_LOAD` was classified `policy_class = HIGH_IMPACT` by
+  `policy.py`, `approval_required = true`, and `next_step =
+  WAIT_FOR_HUMAN_APPROVAL`. The audit record showed `action_status =
+  BLOCKED_PENDING_APPROVAL` with an unchanged `before_state`/`after_state`
+  (both `{}`), confirming `tools.simulate_remediation` was never called.
+  No approval or execution was attempted -- this batch stopped at the
+  policy gate, by design.
+- **Credential exposure: NONE.** The API key was not printed to a
+  terminal, not written to any repository file, not baked into the Docker
+  image, and did not appear in the `/health`, `/api/status`, or `/analyze`
+  responses.
+
+**LIVE VERIFIED (this batch):** `Cloud Run -> Google ADK -> Gemini 3.5
+Flash -> deterministic evidence/risk tools -> deterministic policy gate`,
+for one hosted synthetic incident.
+
+**NOT YET HOSTED END-TO-END:** human approval -> simulated action ->
+verification -> Firestore audit, against the live Cloud Run service. Those
+steps are implemented and offline-tested (Batches 3-4) and were previously
+verified live *independently* -- Firestore against a real database
+(Batch 4 smoke test) and the approval/execute HTTP endpoints offline
+(Batch 5A) -- but not yet as one continuous hosted call chain from the
+live Cloud Run URL.
 
 ## Live Verification Evidence
 
@@ -374,28 +430,40 @@ document or collection was touched. Authentication used standard
 Application Default Credentials only -- no credential value, token, or ADC
 path was printed at any point.
 
-**Cloud Run -- LIVE_VERIFIED (health/status).** One controlled live
-deployment, service `ai-raxbar-agent` in `us-central1` (see "Current scope:
-Batch 5B" above). `GET /health` and `GET /api/status` against the live
-Cloud Run URL both returned `HTTP 200`, with `/api/status` confirming
-`synthetic_only_mode: true` and no secret in the response. This revision
-has no Gemini credential and no Firestore backend configured, so it cannot
-make a live Gemini call or a live Firestore write at all; `/api/incidents/
-analyze` was deliberately not exercised against it for that reason.
+**Cloud Run -- LIVE_VERIFIED.** Service `ai-raxbar-agent` in
+`us-central1` (see "Current scope: Batch 5B" and "Current scope: Batch 5C"
+above). `GET /health` and `GET /api/status` against the live Cloud Run URL
+both returned `HTTP 200`, with `/api/status` confirming
+`synthetic_only_mode: true` and no secret in the response.
 
-**Synthetic-only boundary.** All three verifications above used only
-fictional identifiers (`DEMO-TP-007`, `HACKATHON-SMOKE-001`) or no incident
-data at all (`/health`, `/api/status`) -- no real coordinates, real
-infrastructure identifiers, AI RAXBAR V3 data, CAS, Billing, or Google
-Sheets access occurred in any of them.
+**Gemini 3.5 Flash through Cloud Run -- LIVE_VERIFIED.** One hosted
+`POST /api/incidents/analyze` call for synthetic asset `DEMO-TP-007`
+against the live Cloud Run URL, with the Gemini credential supplied via
+Secret Manager (see Batch 5C above). Deterministic risk (`100` /
+`CRITICAL`), 14 valid evidence refs, `recommended_action =
+REBALANCE_LOAD`, `policy_class = HIGH_IMPACT`, `approval_required = true`,
+`next_step = WAIT_FOR_HUMAN_APPROVAL`; `tools.simulate_remediation` was
+never called. Firestore remained `LOCAL_ONLY` on this revision throughout
+-- no live Firestore write occurred as part of this call.
 
-### Not yet implemented (NEXT / Batch 5C+)
+**Google ADK tool calling through Cloud Run -- LIVE_VERIFIED.** The same
+hosted call above exercised the real ADK agent's real tool-calling loop
+(`get_asset_context`, `get_recent_events`, `get_risk_evidence`,
+`get_remediation_candidates`) against the deployed service, not an offline
+fake -- the model's diagnosis and recommended action were produced from
+live tool results, not asserted independently of them.
 
-- A live `/api/incidents/analyze` call against the deployed Cloud Run
-  service (the service is deployed and `/health`/`/api/status` are
-  LIVE_VERIFIED; see "Current scope: Batch 5B" above -- this needs a
-  Gemini credential wired into the Cloud Run revision first, e.g. via
-  Secret Manager per `docs/CLOUD_RUN_DEPLOYMENT.md`).
+**Synthetic-only boundary.** Every verification above used only fictional
+identifiers (`DEMO-TP-007`, `HACKATHON-SMOKE-001`) or no incident data at
+all (`/health`, `/api/status`) -- no real coordinates, real infrastructure
+identifiers, AI RAXBAR V3 data, CAS, Billing, or Google Sheets access
+occurred in any of them.
+
+### Not yet implemented (NEXT / Batch 5D+)
+
+- Human approval -> simulated action -> verification -> Firestore audit as
+  one continuous hosted call chain against the live Cloud Run service (see
+  "NOT YET HOSTED END-TO-END" under "Current scope: Batch 5C" above).
 - Firestore as the Cloud Run service's persistence backend (currently
   `local`/offline by deliberate choice on this revision).
 - Any production write path.
