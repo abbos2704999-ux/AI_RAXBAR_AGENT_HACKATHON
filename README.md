@@ -44,7 +44,7 @@ a policy decision, or execute an action the policy gate blocks.
 | Simulated action + verification   | IMPLEMENTED               |
 | Cloud Run-ready HTTP service       | IMPLEMENTED               |
 | Docker/container configuration    | IMPLEMENTED               |
-| Cloud Run deployment              | NOT YET DEPLOYED          |
+| Cloud Run deployment              | LIVE_VERIFIED (health/status) |
 
 See "Live Verification Evidence" below for what each `LIVE_VERIFIED` status
 is based on.
@@ -295,9 +295,56 @@ of Batches 1-4 without duplicating any of their decisions.
   `LOW_IMPACT` action executes and returns a verification result without a
   separate approval step; and an unknown incident id returns `404`.
 
-**Cloud Run deployment status: NOT YET DEPLOYED.** No image has been built,
-pushed, or deployed as part of this batch; `docs/CLOUD_RUN_DEPLOYMENT.md`
-is a template for the human-run Batch 5B step.
+**Cloud Run deployment status (as of this batch): NOT YET DEPLOYED.** No
+image had been built, pushed, or deployed as part of Batch 5A;
+`docs/CLOUD_RUN_DEPLOYMENT.md` was a template for the human-run deployment
+step that follows in Batch 5B, below.
+
+## Current scope: Batch 5B
+
+Batch 5B performs the one controlled live Cloud Run deployment
+Batch 5A prepared for, using the unmodified `Dockerfile` and `web.py` from
+that batch -- no repository code changed to make this deployment work.
+
+- **Deployed service** -- `ai-raxbar-agent`, region `us-central1`, project
+  `ai-raxbar-agent-hackathon`, built and deployed via
+  `gcloud run deploy ai-raxbar-agent --source .` (Cloud Build builds the
+  existing `Dockerfile`; no local Docker daemon involved, no manual
+  service-account key created or used -- the build and runtime identity are
+  both Google-managed).
+- **APIs enabled** -- exactly the three Batch 5A called for:
+  `run.googleapis.com`, `artifactregistry.googleapis.com`,
+  `cloudbuild.googleapis.com`. Nothing else was enabled.
+- **Runtime configuration, deliberately minimal** -- no `GEMINI_API_KEY` and
+  no `AI_RAXBAR_REPOSITORY_BACKEND` env var were set on this revision, so
+  the deployed service runs with Gemini `NOT_CONFIGURED` and the Firestore
+  backend at its `local`/offline default. This was a deliberate choice for
+  the first live revision, per Batch 5A's fail-closed design (`web.py`'s
+  `/api/incidents/analyze` returns `503` rather than attempting a Gemini
+  call when unconfigured, and the offline `LocalRepository` default means
+  no live Firestore write can happen from this revision at all) --
+  extending it with real credentials is left to a following batch.
+- **Public access** -- `roles/run.invoker` was granted to `allUsers` on
+  this service, a deliberate choice (not the security-first default) so
+  hackathon judges can reach the URL without needing a Google Cloud
+  identity token. This is safe here specifically because every endpoint
+  enforces the synthetic-only `DEMO-*`/`HACKATHON-*` id boundary, no
+  production data or write path exists behind it, and (per the point
+  above) this revision cannot reach Gemini or write to Firestore at all.
+- **Live verification performed** -- `GET /health` and `GET /api/status`
+  against the live Cloud Run URL both returned `HTTP 200`; `/api/status`
+  reported `synthetic_only_mode: true`, `policy_gate: "ACTIVE"`,
+  `gemini_integration: "NOT_CONFIGURED"`, `firestore_integration:
+  "LOCAL_ONLY"`, with no secret, credential, or token in the response.
+  `POST /api/incidents/analyze` was deliberately **not** attempted against
+  this revision, per the same fail-closed rule the offline tests already
+  cover: Gemini isn't configured on it, so the call would only ever return
+  `503` -- there is nothing to safely verify there yet.
+
+**Cloud Run deployment status: LIVE_VERIFIED for `/health` and
+`/api/status` only.** A live `/api/incidents/analyze` call against the
+deployed service (with Gemini credentials wired in, e.g. via Secret
+Manager per `docs/CLOUD_RUN_DEPLOYMENT.md`) remains a follow-up batch.
 
 ## Live Verification Evidence
 
@@ -327,16 +374,30 @@ document or collection was touched. Authentication used standard
 Application Default Credentials only -- no credential value, token, or ADC
 path was printed at any point.
 
-**Synthetic-only boundary.** Both verifications above used only fictional
-identifiers (`DEMO-TP-007`, `HACKATHON-SMOKE-001`) -- no real coordinates,
-real infrastructure identifiers, AI RAXBAR V3 data, CAS, Billing, or Google
-Sheets access occurred in either run.
+**Cloud Run -- LIVE_VERIFIED (health/status).** One controlled live
+deployment, service `ai-raxbar-agent` in `us-central1` (see "Current scope:
+Batch 5B" above). `GET /health` and `GET /api/status` against the live
+Cloud Run URL both returned `HTTP 200`, with `/api/status` confirming
+`synthetic_only_mode: true` and no secret in the response. This revision
+has no Gemini credential and no Firestore backend configured, so it cannot
+make a live Gemini call or a live Firestore write at all; `/api/incidents/
+analyze` was deliberately not exercised against it for that reason.
 
-### Not yet implemented (NEXT / Batch 5B+)
+**Synthetic-only boundary.** All three verifications above used only
+fictional identifiers (`DEMO-TP-007`, `HACKATHON-SMOKE-001`) or no incident
+data at all (`/health`, `/api/status`) -- no real coordinates, real
+infrastructure identifiers, AI RAXBAR V3 data, CAS, Billing, or Google
+Sheets access occurred in any of them.
 
-- Any actual Cloud Run deployment (the HTTP service and container are
-  implemented and offline-tested; see "Current scope: Batch 5A" above --
-  `docs/CLOUD_RUN_DEPLOYMENT.md` is a template only, not yet run).
+### Not yet implemented (NEXT / Batch 5C+)
+
+- A live `/api/incidents/analyze` call against the deployed Cloud Run
+  service (the service is deployed and `/health`/`/api/status` are
+  LIVE_VERIFIED; see "Current scope: Batch 5B" above -- this needs a
+  Gemini credential wired into the Cloud Run revision first, e.g. via
+  Secret Manager per `docs/CLOUD_RUN_DEPLOYMENT.md`).
+- Firestore as the Cloud Run service's persistence backend (currently
+  `local`/offline by deliberate choice on this revision).
 - Any production write path.
 
 ## Pre-existing vs. new work
