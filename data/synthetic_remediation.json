@@ -1,0 +1,37 @@
+[
+  {
+    "action_type": "RECLOSE_BREAKER",
+    "description": "Simulated remote reclose of a protective breaker to clear a transient outage condition.",
+    "targets": ["repeated_outages_warning", "repeated_outages_critical"],
+    "impact_class": "MEDIUM_IMPACT",
+    "estimated_risk_reduction": 20
+  },
+  {
+    "action_type": "DISPATCH_SYNTHETIC_INSPECTION",
+    "description": "Simulated dispatch of an inspection task to resolve an unresolved-maintenance backlog and address field complaints.",
+    "targets": ["unresolved_maintenance", "repeated_field_complaints"],
+    "impact_class": "LOW_IMPACT",
+    "estimated_risk_reduction": 10
+  },
+  {
+    "action_type": "REBALANCE_LOAD",
+    "description": "Simulated load rebalancing across feeders to relieve an overload condition.",
+    "targets": ["overload_warning", "overload_critical"],
+    "impact_class": "HIGH_IMPACT",
+    "estimated_risk_reduction": 25
+  },
+  {
+    "action_type": "RESET_COMM_MODULE",
+    "description": "Simulated remote reset of a communication module to restore a lost telemetry link.",
+    "targets": ["communication_loss", "stale_telemetry"],
+    "impact_class": "MEDIUM_IMPACT",
+    "estimated_risk_reduction": 20
+  },
+  {
+    "action_type": "SYNTHETIC_TOPOLOGY_RESYNC",
+    "description": "Simulated topology-model resynchronization to clear a detected topology mismatch.",
+    "targets": ["topology_mismatch"],
+    "impact_class": "HIGH_IMPACT",
+    "estimated_risk_reduction": 20
+  }
+]
