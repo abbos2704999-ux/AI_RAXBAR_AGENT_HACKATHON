@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from ai_raxbar_agent import agent, tools, web
 from ai_raxbar_agent.data_store import store
+from ai_raxbar_agent.models import ApprovalState, ApprovalStatus
 
 from fakes import ScriptedFakeLlm
 
@@ -184,3 +185,143 @@ def test_evidence_panel_data_present_even_for_low_impact_auto_executed_action(cl
     ev = resp.json()["evidence"]
     assert ev["evidence_refs"]
     assert ev["asset_state"]
+
+
+# ---------------------------------------------------------------------------
+# Batch 5G regression tests.
+#
+# A live demo run showed risk=85/CRITICAL, an empty diagnosis, and
+# NO_ACTION_RECOMMENDED immediately after analyze, on an asset expected to
+# start at 100/CRITICAL with a REBALANCE_LOAD recommendation. Investigation
+# (see README/session notes) found this was NOT a UI/API field-mapping bug:
+# the live Cloud Run process's in-memory `data_store` still held DEMO-TP-007
+# in its post-remediation state from an earlier live `/execute` call in the
+# same running instance (nothing resets it between separate demo runs), and
+# a live Gemini 429 (daily free-tier quota) independently emptied the
+# diagnosis/recommended_action for that particular call. These tests pin
+# down, offline, that (a) every field the demo page reads really is present
+# with the exact name in both the analyze and execute responses, (b)
+# risk_before/risk_after are unknown until execute and correct once it
+# happens, and (c) `data_store.store.reset()` -- the mechanism that must run
+# before a "fresh" demo pass -- genuinely discards a prior execution's
+# mutation rather than silently preserving it.
+# ---------------------------------------------------------------------------
+
+
+def _extract_field_reads(prefix: str) -> set[str]:
+    """Every `<prefix>.<field>` read in the demo page's inline script, e.g.
+    `_extract_field_reads("a")` -> {"risk_score", "risk_level", ...} for
+    every `a.risk_score`, `a.risk_level`, ... in the JS source."""
+    body = (web._STATIC_DIR / "demo.html").read_text(encoding="utf-8")  # noqa: SLF001
+    pattern = re.compile(r"\b" + re.escape(prefix) + r"\.([A-Za-z_][A-Za-z0-9_]*)\b")
+    return set(pattern.findall(body))
+
+
+def test_ui_field_reads_match_actual_analyze_response_contract(client):
+    """Every `a.*` (analysis) and `ev.*` (evidence) field the demo page's JS
+    reads must actually exist as a top-level key of `analysis`/`evidence` in
+    the real `/api/incidents/analyze` response -- catches a silent rename on
+    either side before it ever reaches a browser."""
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    resp = client.post("/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"})
+    assert resp.status_code == 200
+    body = resp.json()
+
+    js_analysis_fields = _extract_field_reads("a")
+    # JS-builtin/DOM properties that also match the `a.<word>` pattern but
+    # are not reads of the `analysis` object (e.g. array methods).
+    js_analysis_fields -= {"length", "map", "join", "reduce", "className"}
+    missing = js_analysis_fields - set(body["analysis"].keys())
+    assert not missing, f"demo.html reads a.* field(s) analyze response doesn't have: {missing}"
+
+    js_evidence_fields = _extract_field_reads("ev")
+    js_evidence_fields -= {"length", "map", "join"}
+    missing = js_evidence_fields - set(body["evidence"].keys())
+    assert not missing, f"demo.html reads ev.* field(s) analyze response doesn't have: {missing}"
+
+
+def test_ui_field_reads_match_actual_execute_response_contract(client):
+    """Same contract check for `rec.*` (audit_record) reads against a real
+    `/execute` response -- specifically the before/after/risk/verification
+    fields the "BEFORE/AFTER" and "VERIFIED RESULT" panels depend on."""
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    incident_id = client.post(
+        "/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"}
+    ).json()["incident_id"]
+    client.post(
+        f"/api/incidents/{incident_id}/approve",
+        json={"approver": "test-operator", "reason": "regression test"},
+    )
+    resp = client.post(f"/api/incidents/{incident_id}/execute")
+    assert resp.status_code == 200
+    record = resp.json()["audit_record"]
+
+    js_record_fields = _extract_field_reads("rec")
+    js_record_fields -= {"length", "map", "join"}
+    missing = js_record_fields - set(record.keys())
+    assert not missing, f"demo.html reads rec.* field(s) execute response doesn't have: {missing}"
+
+
+def test_risk_before_is_baseline_until_execution_then_matches_after_execute(client):
+    """risk_score in `analysis` reflects the asset's *current* deterministic
+    state at analyze time (100/CRITICAL on a freshly reset DEMO-TP-007);
+    `audit_record.risk_before`/`risk_after` stay `None` until `/execute`
+    actually runs, then become the real before/after values -- never
+    fabricated, never present early."""
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    analyze_body = client.post("/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"}).json()
+
+    assert analyze_body["analysis"]["risk_score"] == 100
+    assert analyze_body["analysis"]["risk_level"] == "CRITICAL"
+    assert analyze_body["analysis"]["diagnosis"]
+    assert analyze_body["analysis"]["recommended_action"] == "REBALANCE_LOAD"
+    assert analyze_body["analysis"]["policy_class"] == "HIGH_IMPACT"
+    assert analyze_body["analysis"]["approval_required"] is True
+    assert analyze_body["analysis"]["next_step"] == "WAIT_FOR_HUMAN_APPROVAL"
+    assert analyze_body["audit_record"]["risk_before"] is None
+    assert analyze_body["audit_record"]["risk_after"] is None
+
+    incident_id = analyze_body["incident_id"]
+    client.post(
+        f"/api/incidents/{incident_id}/approve",
+        json={"approver": "test-operator", "reason": "regression test"},
+    )
+    execute_body = client.post(f"/api/incidents/{incident_id}/execute").json()
+    record = execute_body["audit_record"]
+
+    assert record["risk_before"] == 100
+    assert record["risk_after"] == 85
+    assert record["verification_result"] == "IMPROVED"
+
+
+def test_store_reset_discards_stale_post_execution_state():
+    """The exact "reset must not preserve stale state" contract: after a
+    full analyze->approve->execute cycle mutates DEMO-TP-007 (risk drops to
+    85, load_ratio drops to 0.8), `data_store.store.reset()` -- the
+    mechanism a fresh demo run/process start relies on -- must put it back
+    to the untouched synthetic baseline (risk 100, load_ratio 1.3), not
+    silently carry the mutation forward.
+    """
+    baseline = tools.get_risk_evidence("DEMO-TP-007")
+    assert baseline.risk_score == 100
+    assert "overload_critical" in baseline.risk_factors
+
+    # Mutate it via a real execute, exactly like the live demo does.
+    result = tools.simulate_remediation(
+        "DEMO-TP-007",
+        "REBALANCE_LOAD",
+        approval=ApprovalState(status=ApprovalStatus.APPROVED, approver="setup", reason="setup"),
+    )
+    assert result.success is True
+    mutated = tools.get_risk_evidence("DEMO-TP-007")
+    assert mutated.risk_score == 85
+    assert "overload_critical" not in mutated.risk_factors
+
+    # The fix under test: reset must discard that mutation completely.
+    store.reset()
+
+    fresh = tools.get_risk_evidence("DEMO-TP-007")
+    assert fresh.risk_score == 100
+    assert fresh.risk_level.value == "CRITICAL"
+    assert "overload_critical" in fresh.risk_factors
+    assert store.get_asset("DEMO-TP-007").load_ratio == 1.3
