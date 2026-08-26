@@ -30,8 +30,25 @@ assessment) is a common pattern in operations tooling and is not itself V3
 IP; the rules, thresholds, code, and data here were written from scratch for
 Batch 1 of this hackathon.
 
-## Scope boundary for Batch 1
+## Batch 2 additions (new hackathon work)
 
-This batch is deliberately offline and deterministic. It does not call
-Gemini, Google ADK, or any Google Cloud service, and it makes no network
-calls of any kind. See `README.md` for what is planned for Batch 2.
+- `src/ai_raxbar_agent/agent.py`, `agent_tools.py`, `prompts.py`,
+  `config.py` -- new orchestration layer: one Google ADK agent, typed
+  read-only tool wrappers around the Batch 1 tools, the system prompt, and
+  environment-variable-driven configuration. No credentials are hardcoded
+  anywhere in this repository.
+- `tests/test_agent.py`, `tests/fakes.py` -- new offline test suite for the
+  agent layer, including a prompt-injection safety test.
+- `scripts/smoke_test_gemini.py` -- new, explicit, opt-in, human-run live
+  Gemini smoke test script. Not run automatically by anything in this
+  repository.
+
+## Scope boundary for Batch 2
+
+Batch 2 adds Gemini + Google ADK tool-calling on top of the unmodified
+Batch 1 foundation, but still makes no live network call from any test, and
+still touches no Google Cloud service. `scripts/smoke_test_gemini.py` is
+the one exception -- a manual, opt-in command a human runs on purpose,
+never invoked automatically. See `README.md` for current scope and what
+remains for later batches (human-approval UI, automatic action execution,
+GCP deployment).
