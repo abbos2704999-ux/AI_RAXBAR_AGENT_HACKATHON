@@ -47,6 +47,7 @@ a policy decision, or execute an action the policy gate blocks.
 | Cloud Run deployment              | LIVE_VERIFIED              |
 | Gemini 3.5 Flash through Cloud Run | LIVE_VERIFIED             |
 | Google ADK tool calling through Cloud Run | LIVE_VERIFIED      |
+| Hosted approval -> simulated action -> verify -> Firestore audit | LIVE_VERIFIED |
 
 See "Live Verification Evidence" below for what each `LIVE_VERIFIED` status
 is based on.
@@ -394,13 +395,55 @@ Firestore and without changing any source file.
 Flash -> deterministic evidence/risk tools -> deterministic policy gate`,
 for one hosted synthetic incident.
 
-**NOT YET HOSTED END-TO-END:** human approval -> simulated action ->
-verification -> Firestore audit, against the live Cloud Run service. Those
-steps are implemented and offline-tested (Batches 3-4) and were previously
-verified live *independently* -- Firestore against a real database
-(Batch 4 smoke test) and the approval/execute HTTP endpoints offline
-(Batch 5A) -- but not yet as one continuous hosted call chain from the
-live Cloud Run URL.
+**NOT YET HOSTED END-TO-END (as of Batch 5C):** human approval -> simulated
+action -> verification -> Firestore audit, against the live Cloud Run
+service, as one continuous hosted call chain. Closed in Batch 5D below.
+
+## Current scope: Batch 5D
+
+Batch 5D switches the deployed Cloud Run service from the offline
+`LocalRepository` to a live `FirestoreRepository`, then proves one
+complete hosted synthetic workflow -- analyze -> approve -> execute ->
+verify -> Firestore audit -> cleanup -- end to end against the real,
+deployed service. No source file changed for this batch; it is entirely
+infrastructure wiring (IAM + Cloud Run env var) plus one live workflow run.
+
+- **Firestore wired into the hosted service** -- `AI_RAXBAR_REPOSITORY_BACKEND=firestore`
+  set on the existing Cloud Run service (same service, new revision -- not
+  a new service). Firestore access uses the same Cloud Run runtime
+  identity/Application Default Credentials already used for the rest of
+  this deployment -- no service-account JSON, no embedded credentials.
+- **Least-privilege IAM** -- `roles/datastore.user` granted explicitly to
+  the Cloud Run runtime service account, scoped to Firestore only; no new
+  broad Owner/Editor role was granted (the account's pre-existing
+  `roles/editor`, from earlier project setup, was left untouched, not
+  added by this batch).
+- **One complete hosted synthetic workflow, live** -- for a single
+  synthetic incident on asset `DEMO-TP-007`: `POST /api/incidents/analyze`
+  (one Gemini call, `next_step=WAIT_FOR_HUMAN_APPROVAL`) -> a live read
+  confirmed the incident and `PENDING` approval were actually persisted in
+  Firestore -> `POST .../execute` *before* approval was confirmed blocked
+  (`HTTP 409`, policy gate enforced) -> `POST .../approve` (`APPROVED`) ->
+  `POST .../execute` (`action_status=EXECUTED`, `risk_before=100` ->
+  `risk_after=85`, `verification_result=IMPROVED`, a real, measurable,
+  synthetic-only state change) -> a live read confirmed Firestore held the
+  incident, the approval, and both audit records (`BLOCKED_PENDING_APPROVAL`
+  then `EXECUTED`) -> `cleanup_incident()` removed exactly those documents
+  (`incident_deleted=True`, `approval_deleted=True`,
+  `audit_records_deleted=2`) -> a final live read confirmed all three are
+  gone and that every collection involved is now empty, i.e. nothing
+  unrelated was ever touched.
+- **Exactly one Gemini call** was made for this entire batch (the single
+  `/analyze` step); approve/execute/cleanup involve no Gemini call at all.
+- **Credential exposure: NONE** -- the API key and Firestore access both
+  used the existing runtime identity/Secret Manager wiring from Batches 5B
+  -- 5C; nothing new was printed, logged, or returned by any endpoint.
+
+**Hosted end-to-end chain -- LIVE_VERIFIED:** `Cloud Run -> Google ADK ->
+Gemini 3.5 Flash -> deterministic tools -> policy gate -> human approval ->
+simulated action -> deterministic verification -> Firestore audit`, for
+one complete synthetic incident, with guarded cleanup leaving Firestore
+exactly as it was before the run.
 
 ## Live Verification Evidence
 
@@ -443,8 +486,8 @@ Secret Manager (see Batch 5C above). Deterministic risk (`100` /
 `CRITICAL`), 14 valid evidence refs, `recommended_action =
 REBALANCE_LOAD`, `policy_class = HIGH_IMPACT`, `approval_required = true`,
 `next_step = WAIT_FOR_HUMAN_APPROVAL`; `tools.simulate_remediation` was
-never called. Firestore remained `LOCAL_ONLY` on this revision throughout
--- no live Firestore write occurred as part of this call.
+never called. Firestore remained `LOCAL_ONLY` on the Batch 5C revision --
+see the Batch 5D entry below for the live Firestore-backed run.
 
 **Google ADK tool calling through Cloud Run -- LIVE_VERIFIED.** The same
 hosted call above exercised the real ADK agent's real tool-calling loop
@@ -453,19 +496,31 @@ hosted call above exercised the real ADK agent's real tool-calling loop
 fake -- the model's diagnosis and recommended action were produced from
 live tool results, not asserted independently of them.
 
+**Hosted approval -> simulated action -> verify -> Firestore audit --
+LIVE_VERIFIED.** One complete hosted synthetic workflow (see "Current
+scope: Batch 5D" above), against the live Cloud Run service with
+`AI_RAXBAR_REPOSITORY_BACKEND=firestore`: `/analyze` (one Gemini call) ->
+live-read-confirmed Firestore persistence of the pending incident/approval
+-> `/execute` blocked pre-approval (`HTTP 409`) -> `/approve` -> `/execute`
+(`EXECUTED`, `risk_before=100` -> `risk_after=85`,
+`verification_result=IMPROVED`) -> live-read-confirmed Firestore held the
+incident, approval, and both audit records -> guarded
+`cleanup_incident()` removed exactly those documents -> live-read-confirmed
+all three gone and every involved collection empty afterward (no unrelated
+document touched). Firestore access used the Cloud Run runtime
+identity/ADC and a narrowly scoped `roles/datastore.user` grant -- no
+service-account JSON, no credential printed.
+
 **Synthetic-only boundary.** Every verification above used only fictional
 identifiers (`DEMO-TP-007`, `HACKATHON-SMOKE-001`) or no incident data at
 all (`/health`, `/api/status`) -- no real coordinates, real infrastructure
 identifiers, AI RAXBAR V3 data, CAS, Billing, or Google Sheets access
 occurred in any of them.
 
-### Not yet implemented (NEXT / Batch 5D+)
+### Not yet implemented (NEXT / Batch 5E+)
 
-- Human approval -> simulated action -> verification -> Firestore audit as
-  one continuous hosted call chain against the live Cloud Run service (see
-  "NOT YET HOSTED END-TO-END" under "Current scope: Batch 5C" above).
-- Firestore as the Cloud Run service's persistence backend (currently
-  `local`/offline by deliberate choice on this revision).
+- A user-facing UI (every verification so far is via direct HTTP calls,
+  not a browser front end).
 - Any production write path.
 
 ## Pre-existing vs. new work
