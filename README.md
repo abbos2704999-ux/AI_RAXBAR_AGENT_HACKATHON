@@ -33,6 +33,20 @@ As of Batch 2, a Gemini-backed Google ADK agent *calls* these typed tools
 and *plans* over their outputs, but it cannot change a risk score, override
 a policy decision, or execute an action the policy gate blocks.
 
+## Status summary
+
+| Component                        | Status            |
+|-----------------------------------|-------------------|
+| Firestore persistence             | LIVE_VERIFIED     |
+| Gemini 3.5                        | LIVE_VERIFIED     |
+| Google ADK                        | IMPLEMENTED       |
+| Human approval                    | IMPLEMENTED       |
+| Simulated action + verification   | IMPLEMENTED       |
+| Cloud Run                         | NOT YET DEPLOYED  |
+
+See "Live Verification Evidence" below for what each `LIVE_VERIFIED` status
+is based on.
+
 ## Current scope: Batch 1
 
 This repository currently contains **only** the deterministic, public-safe,
@@ -185,9 +199,11 @@ incident/approval/audit state, without weakening any Batch 1-3 safety gate.
   `scripts/smoke_test_gemini.py`'s posture) that lazily imports the SDK and
   builds a client from standard Google Cloud credentials (Application
   Default Credentials / environment) -- nothing in this repository calls it
-  automatically. **No live Firestore call has been made from this
-  repository; nothing here should be read as `LIVE_FIRESTORE_VERIFIED`.**
-  Suggested/used collections: `incidents`, `approvals`, `audit_records`.
+  automatically. **Firestore integration status: LIVE_VERIFIED.** One
+  controlled, opt-in live smoke test has been run against a real GCP
+  project using this adapter unmodified; see "Live Verification Evidence"
+  below for what was confirmed.
+  Collections used: `incidents`, `approvals`, `audit_records`.
 - **Controlled synthetic smoke-test cleanup** (`cleanup_incident`, part of
   the `IncidentRepository` interface) -- a narrow, opt-in method that
   deletes exactly one incident's `incidents`/`approvals` documents plus
@@ -229,13 +245,43 @@ incident/approval/audit state, without weakening any Batch 1-3 safety gate.
   structural compatibility against a fake client
   (`tests/fakes.py::FakeFirestoreClient`) with zero network access.
 
+## Live Verification Evidence
+
+Both live checks below used only synthetic/fictional data, were run
+manually by a human as a one-off opt-in action, and are not invoked
+automatically by any test, script, or orchestrator code path.
+
+**Gemini -- LIVE_VERIFIED.** `scripts/smoke_test_gemini.py --yes
+--asset-id DEMO-TP-007`, model `gemini-3.5-flash`, against the synthetic
+asset `DEMO-TP-007`. Confirmed: a real Gemini response was received;
+`risk_score`/`risk_level`/`evidence_refs` matched the deterministic risk
+engine's output, not anything the model asserted; the recommended action
+was classified `HIGH_IMPACT` by `policy.py`, so `approval_required=True`
+and `tools.simulate_remediation` was never called. Full detail in "Current
+scope: Batch 2" above.
+
+**Firestore -- LIVE_VERIFIED.** One controlled, opt-in live smoke test
+against GCP project `ai-raxbar-agent-hackathon`, default Firestore
+database, using this repository's unmodified `FirestoreRepository` +
+`build_live_client()`, with a single synthetic incident id
+(`HACKATHON-SMOKE-001`). Confirmed, in order: incident write + exact
+readback; approval (`PENDING`) write + readback; one audit record write +
+readback; `cleanup_incident("HACKATHON-SMOKE-001")` deleting exactly the
+incident, approval, and matching audit record it wrote (nothing else);
+post-cleanup reads confirming all three are gone; and that no unrelated
+document or collection was touched. Authentication used standard
+Application Default Credentials only -- no credential value, token, or ADC
+path was printed at any point.
+
+**Synthetic-only boundary.** Both verifications above used only fictional
+identifiers (`DEMO-TP-007`, `HACKATHON-SMOKE-001`) -- no real coordinates,
+real infrastructure identifiers, AI RAXBAR V3 data, CAS, Billing, or Google
+Sheets access occurred in either run.
+
 ### Not yet implemented (NEXT / Batch 5+)
 
-- A live Firestore connection/verification against a real GCP project (the
-  adapter is implemented and offline-tested; see Batch 4 above).
 - Any Cloud Run deployment or other live GCP service.
 - Any production write path.
-- Live Gemini verification is done -- see "Current scope: Batch 2" above.
 
 ## Pre-existing vs. new work
 
