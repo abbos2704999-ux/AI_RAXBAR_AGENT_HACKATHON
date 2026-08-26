@@ -23,7 +23,18 @@ agent = ["google-adk>=1.0.0", "google-genai>=1.0.0"]
 # and not required by the offline test suite, which exercises the adapter
 # against `tests/fakes.py::FakeFirestoreClient` instead.
 firestore = ["google-cloud-firestore>=2.0.0"]
-dev = ["pytest>=7.0", "google-adk>=1.0.0", "google-genai>=1.0.0"]
+# Batch 5A Cloud Run HTTP entrypoint (web.py): a minimal ASGI service and
+# server. Not required to import/use any other module in this package --
+# only to run `ai_raxbar_agent.web:app`.
+web = ["fastapi>=0.100", "uvicorn>=0.23"]
+dev = [
+    "pytest>=7.0",
+    "google-adk>=1.0.0",
+    "google-genai>=1.0.0",
+    "fastapi>=0.100",
+    "uvicorn>=0.23",
+    "httpx>=0.24",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

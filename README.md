@@ -35,14 +35,16 @@ a policy decision, or execute an action the policy gate blocks.
 
 ## Status summary
 
-| Component                        | Status            |
-|-----------------------------------|-------------------|
-| Firestore persistence             | LIVE_VERIFIED     |
-| Gemini 3.5                        | LIVE_VERIFIED     |
-| Google ADK                        | IMPLEMENTED       |
-| Human approval                    | IMPLEMENTED       |
-| Simulated action + verification   | IMPLEMENTED       |
-| Cloud Run                         | NOT YET DEPLOYED  |
+| Component                        | Status                    |
+|-----------------------------------|---------------------------|
+| Firestore persistence             | LIVE_VERIFIED             |
+| Gemini 3.5                        | LIVE_VERIFIED             |
+| Google ADK                        | IMPLEMENTED               |
+| Human approval                    | IMPLEMENTED               |
+| Simulated action + verification   | IMPLEMENTED               |
+| Cloud Run-ready HTTP service       | IMPLEMENTED               |
+| Docker/container configuration    | IMPLEMENTED               |
+| Cloud Run deployment              | NOT YET DEPLOYED          |
 
 See "Live Verification Evidence" below for what each `LIVE_VERIFIED` status
 is based on.
@@ -245,6 +247,58 @@ incident/approval/audit state, without weakening any Batch 1-3 safety gate.
   structural compatibility against a fake client
   (`tests/fakes.py::FakeFirestoreClient`) with zero network access.
 
+## Current scope: Batch 5A
+
+Batch 5A prepares the application for Cloud Run **deployment readiness
+only** -- it does not deploy anything. It adds a thin HTTP boundary on top
+of Batches 1-4 without duplicating any of their decisions.
+
+- **HTTP entrypoint** (`web.py`, FastAPI + uvicorn) -- `GET /health` (pure
+  process liveness -- never calls Gemini or Firestore), `GET /api/status`
+  (service name/version, Gemini/Firestore configuration flags,
+  `synthetic_only_mode`, `policy_gate` -- flags only, never a secret, API
+  key, or the real GCP project id), `POST /api/incidents/analyze`,
+  `POST /api/incidents/{incident_id}/approve`,
+  `POST /api/incidents/{incident_id}/reject`, and
+  `POST /api/incidents/{incident_id}/execute`. Every handler only
+  translates HTTP <-> the existing `agent`, `orchestrator`, `policy`,
+  `approval`, and repository modules -- no risk, policy, approval, or
+  persistence decision is made in `web.py` itself.
+- **Synthetic-only boundary at the API layer** -- every asset_id/incident_id
+  this service accepts must start with `DEMO-` or `HACKATHON-` (optionally
+  after the orchestrator's `INC-` incident-id prefix); anything else is
+  rejected with `400` before any other module is touched.
+- **Fail-closed persistence backend selection** -- `AI_RAXBAR_REPOSITORY_BACKEND`
+  (`local`, the default, or `firestore`) chooses the repository. Setting it
+  to `firestore` builds a `FirestoreRepository` the first time a request
+  needs it, via `firestore_repository.build_live_client()` (Application
+  Default Credentials / the Cloud Run service identity -- never a
+  service-account JSON file); if that fails, the request returns `503`
+  rather than silently falling back to the local in-memory repository.
+- **Container** (`Dockerfile`, `.dockerignore`) -- small `python:3.12-slim`
+  image, non-root runtime user, deterministic `uvicorn` startup, honors
+  Cloud Run's `PORT` env var. No `.env`, credential, service-account JSON,
+  or V3 source/data is copied into the image (none of those exist in this
+  repository; excluded defensively regardless).
+- **Deployment template** (`docs/CLOUD_RUN_DEPLOYMENT.md`) -- documents the
+  expected `gcloud run deploy` command shape (project/region/service
+  name/env vars all left as placeholders, no credential values embedded).
+  This is documentation only -- no command in it has been run.
+- Offline tests (`tests/test_web.py`, 11 total, part of the suite below)
+  exercise every endpoint through `TestClient` against the offline
+  `LocalRepository` and a `ScriptedFakeLlm`-backed agent (same pattern as
+  `tests/test_orchestrator.py`) -- zero network calls. They confirm:
+  `/health` and `/api/status` work with no secrets in the response;
+  non-synthetic and unknown asset/incident ids are rejected; a
+  `HIGH_IMPACT` action blocks at `/analyze` and stays blocked at `/execute`
+  until `/approve` is called; a rejected incident can never execute; a
+  `LOW_IMPACT` action executes and returns a verification result without a
+  separate approval step; and an unknown incident id returns `404`.
+
+**Cloud Run deployment status: NOT YET DEPLOYED.** No image has been built,
+pushed, or deployed as part of this batch; `docs/CLOUD_RUN_DEPLOYMENT.md`
+is a template for the human-run Batch 5B step.
+
 ## Live Verification Evidence
 
 Both live checks below used only synthetic/fictional data, were run
@@ -278,9 +332,11 @@ identifiers (`DEMO-TP-007`, `HACKATHON-SMOKE-001`) -- no real coordinates,
 real infrastructure identifiers, AI RAXBAR V3 data, CAS, Billing, or Google
 Sheets access occurred in either run.
 
-### Not yet implemented (NEXT / Batch 5+)
+### Not yet implemented (NEXT / Batch 5B+)
 
-- Any Cloud Run deployment or other live GCP service.
+- Any actual Cloud Run deployment (the HTTP service and container are
+  implemented and offline-tested; see "Current scope: Batch 5A" above --
+  `docs/CLOUD_RUN_DEPLOYMENT.md` is a template only, not yet run).
 - Any production write path.
 
 ## Pre-existing vs. new work

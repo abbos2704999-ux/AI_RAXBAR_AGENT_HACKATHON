@@ -1,0 +1,38 @@
+# Keep the build context (and therefore the image) small and free of
+# anything local-only, secret, or not needed to run the service.
+
+.git/
+.gitignore
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.DS_Store
+
+# Never copied into the image, ever.
+.env
+.env.*
+*.key
+*.pem
+credentials*
+secrets*
+token*
+service-account*.json
+.clasp.json
+.clasprc.json
+
+# Not needed at build/run time.
+tests/
+docs/
+scripts/
+README.md
+Dockerfile
+.dockerignore
+
+# Defensive: no V3 or other private/local data source is ever copied in.
+data_private/
+private_data/
+raw_data/
+real_data/
+production_data/
