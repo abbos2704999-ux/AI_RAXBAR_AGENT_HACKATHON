@@ -14,49 +14,49 @@ plumbing around them.
 
 ```mermaid
 flowchart TD
-    A1["Synthetic Incident\n(asset_id: DEMO-* / HACKATHON-* only)"]
+    A1["Synthetic Incident<br/>(asset_id: DEMO-* / HACKATHON-* only)"]
 
     subgraph B["B. DETERMINISTIC DOMAIN TOOLS -- tool-owned"]
-        B1["Deterministic Evidence\n(synthetic events, signals)"]
-        B2["Deterministic Risk Engine\nrisk_score / risk_level / risk_factors"]
+        B1["Deterministic Evidence<br/>(synthetic events, signals)"]
+        B2["Deterministic Risk Engine<br/>risk_score / risk_level / risk_factors"]
     end
 
     subgraph C["C. AGENT / GEMINI REASONING -- model-owned"]
         C1["Google ADK Agent"]
         C2["Gemini 3.5 Flash"]
-        C3["Diagnosis + candidate\nremediation plan"]
+        C3["Diagnosis + candidate<br/>remediation plan"]
     end
 
     subgraph D["D. DETERMINISTIC SAFETY / POLICY -- tool-owned"]
         D1["Policy Gate (policy.py)"]
-        D2{"policy_class ==\nHIGH_IMPACT ?"}
+        D2{"policy_class ==<br/>HIGH_IMPACT ?"}
     end
 
     subgraph E["E. HUMAN CONTROL -- human-owned"]
-        E1["Human Approval\nAPPROVE / REJECT"]
+        E1["Human Approval<br/>APPROVE / REJECT"]
     end
 
     subgraph F["F. SIMULATED ACTION -- simulated, no real grid control"]
-        F1["simulate_remediation()\nsynthetic state mutation only"]
+        F1["simulate_remediation()<br/>synthetic state mutation only"]
     end
 
     subgraph G["G. VERIFICATION -- tool-owned"]
-        G1["Deterministic Verify\nrisk_before -> risk_after"]
+        G1["Deterministic Verify<br/>risk_before -> risk_after"]
     end
 
     subgraph H["H. FIRESTORE AUDIT"]
-        H1["Firestore\nincidents / approvals / audit_records"]
+        H1["Firestore<br/>incidents / approvals / audit_records"]
     end
 
     SM["Secret Manager"]
-    CR["Cloud Run\n(hosts the whole service)"]
+    CR["Cloud Run<br/>(hosts the whole service)"]
 
     A1 --> B1 --> B2 --> C1 --> C2 --> C3 --> D1 --> D2
-    B2 -.->|"risk score/level feed the record\nas-computed -- never overridden by the model"| D1
+    B2 -.->|"risk score/level feed the record<br/>as-computed -- never overridden by the model"| D1
     D2 -->|yes: HIGH_IMPACT| E1 --> F1
-    D2 -->|"no: LOW/MEDIUM_IMPACT\n(no human approval required)"| F1
+    D2 -->|"no: LOW/MEDIUM_IMPACT<br/>(no human approval required)"| F1
     F1 --> G1 --> H1
-    SM -->|"Gemini API credential\n(no key ever in source, image, or Git)"| C2
+    SM -->|"Gemini API credential<br/>(no key ever in source, image, or Git)"| C2
     CR -. hosts every step above .- A1
     CR -. hosts every step above .- H1
 

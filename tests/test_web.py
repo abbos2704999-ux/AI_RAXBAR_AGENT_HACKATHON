@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 
 from ai_raxbar_agent import agent, tools, web
 from ai_raxbar_agent.data_store import store
+from ai_raxbar_agent.local_repository import LocalRepository
+from ai_raxbar_agent.repository import RepositoryError
 
 from fakes import ScriptedFakeLlm
 
@@ -297,3 +299,166 @@ def test_reset_asset_endpoint_is_idempotent(client):
     second = client.post("/api/assets/DEMO-TP-007/reset")
     assert first.status_code == second.status_code == 200
     assert first.json() == second.json()
+
+
+# ---------------------------------------------------------------------------
+# Persistence-failure disclosure boundary.
+#
+# `RepositoryError` messages are built by the backend adapter and embed the
+# underlying exception (`firestore_repository.py` does
+# `f"Failed to save incident {id!r}: {exc}"`). A real Firestore/gRPC error
+# string carries the full resource path -- which includes the GCP project id
+# and database name -- plus internal endpoints and IAM detail. This service is
+# publicly reachable and unauthenticated for the judge demo, so none of that
+# may reach the client: it is logged server-side and replaced with a generic
+# 503 body (`web._persistence_unavailable`). These tests pin that contract on
+# every endpoint that touches persistence.
+# ---------------------------------------------------------------------------
+
+_LEAKY_MESSAGE = (
+    "Failed to save incident 'INC-DEMO-TP-007-abcd1234': 404 Requested entity was "
+    "not found. resource=projects/secret-project-id-12345/databases/(default)/"
+    "documents/incidents/x; endpoint=firestore.googleapis.com; "
+    "serviceAccount=svc-internal@secret-project-id-12345.iam.gserviceaccount.com"
+)
+
+_LEAKY_TOKENS = (
+    "secret-project-id-12345",
+    "firestore.googleapis.com",
+    "iam.gserviceaccount.com",
+    "projects/",
+)
+
+
+class _ExplodingRepository(LocalRepository):
+    """A repository whose every operation fails with a realistically leaky
+    `RepositoryError`, matching the message shape `FirestoreRepository`
+    actually produces."""
+
+    def _boom(self):
+        raise RepositoryError(_LEAKY_MESSAGE)
+
+    def save_incident(self, incident):
+        self._boom()
+
+    def get_incident(self, incident_id):
+        self._boom()
+
+    def save_audit_record(self, record):
+        self._boom()
+
+    def list_audit_records(self, incident_id=None):
+        self._boom()
+
+    def save_approval_state(self, incident_id, approval):
+        self._boom()
+
+    def get_approval_state(self, incident_id):
+        self._boom()
+
+
+class _ReadOnlyExplodingRepository(_ExplodingRepository):
+    """Reads succeed (so a handler gets past its 404 check) but writes
+    fail -- exercises the write-side error paths specifically."""
+
+    def get_incident(self, incident_id):
+        return LocalRepository.get_incident(self, incident_id)
+
+    def get_approval_state(self, incident_id):
+        return LocalRepository.get_approval_state(self, incident_id)
+
+
+def _assert_no_backend_detail_leaked(resp):
+    assert resp.status_code == 503, resp.status_code
+    body = resp.text
+    for token in _LEAKY_TOKENS:
+        assert token not in body, f"backend detail {token!r} leaked to client: {body}"
+    assert "Failed to save incident" not in body
+    assert resp.json()["detail"] == web._PERSISTENCE_UNAVAILABLE_DETAIL
+
+
+@pytest.fixture
+def exploding_repo(monkeypatch):
+    def _install(repo):
+        monkeypatch.setattr(web, "get_repository", lambda: repo)
+        return repo
+
+    return _install
+
+
+def test_analyze_persistence_failure_returns_generic_503(client, exploding_repo):
+    exploding_repo(_ExplodingRepository())
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    resp = client.post("/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"})
+    _assert_no_backend_detail_leaked(resp)
+
+
+def test_approve_persistence_failure_returns_generic_503(client, exploding_repo):
+    # Create a real pending incident in the default local repository first...
+    _install_fake_agent("DEMO-TP-007", "REBALANCE_LOAD")
+    incident_id = client.post(
+        "/api/incidents/analyze", json={"asset_id": "DEMO-TP-007"}
+    ).json()["incident_id"]
+
+    # ...then make only the approval *write* fail. Seed the incident across
+    # via the public IncidentRepository interface (no private attribute
+    # access), so the handler gets past its 404 check and the 503 under test
+    # can only come from the approval write.
+    incident = web._local_repository.get_incident(incident_id)
+    assert incident is not None
+    repo = _ReadOnlyExplodingRepository()
+    LocalRepository.save_incident(repo, incident)
+    assert repo.get_incident(incident_id) is not None
+    exploding_repo(repo)
+
+    resp = client.post(
+        f"/api/incidents/{incident_id}/approve",
+        json={"approver": "demo-operator", "reason": "evidence verified"},
+    )
+    _assert_no_backend_detail_leaked(resp)
+
+
+def test_execute_persistence_read_failure_returns_generic_503(client, exploding_repo):
+    exploding_repo(_ExplodingRepository())
+    resp = client.post("/api/incidents/INC-DEMO-TP-007-abcd1234/execute")
+    _assert_no_backend_detail_leaked(resp)
+
+
+def test_reject_persistence_read_failure_returns_generic_503(client, exploding_repo):
+    exploding_repo(_ExplodingRepository())
+    resp = client.post(
+        "/api/incidents/INC-DEMO-TP-007-abcd1234/reject",
+        json={"approver": "demo-operator", "reason": "not now"},
+    )
+    _assert_no_backend_detail_leaked(resp)
+
+
+def test_unavailable_backend_returns_generic_503_without_backend_detail(client, monkeypatch):
+    """A `RepositoryUnavailableError` (backend selection/construction
+    failure) must also fail closed with the same generic body -- never the
+    underlying exception text."""
+
+    def _unavailable():
+        raise web.RepositoryUnavailableError(_LEAKY_MESSAGE)
+
+    monkeypatch.setattr(web, "get_repository", _unavailable)
+    resp = client.post("/api/incidents/INC-DEMO-TP-007-abcd1234/execute")
+    _assert_no_backend_detail_leaked(resp)
+
+
+def test_persistence_failure_is_logged_server_side(client, exploding_repo, caplog):
+    """The detail is not lost -- it is written to the server log, where an
+    operator (not an anonymous browser) can read it."""
+    exploding_repo(_ExplodingRepository())
+    with caplog.at_level("ERROR", logger="ai_raxbar_agent.web"):
+        client.post("/api/incidents/INC-DEMO-TP-007-abcd1234/execute")
+
+    records = [r for r in caplog.records if r.name == "ai_raxbar_agent.web"]
+    assert len(records) == 1, [r.getMessage() for r in records]
+    record = records[0]
+    assert record.levelname == "ERROR"
+    assert "Persistence failure during incident read" == record.getMessage()
+    # The exception itself -- including the detail withheld from the client --
+    # is attached, so an operator reading the log loses nothing.
+    assert record.exc_info is not None
+    assert _LEAKY_MESSAGE in str(record.exc_info[1])

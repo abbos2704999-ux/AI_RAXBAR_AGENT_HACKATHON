@@ -25,6 +25,12 @@ Safety boundary:
   identity, never a service-account JSON file. If that construction fails,
   the request fails closed (503); nothing here silently falls back to the
   local in-memory repository.
+- No backend exception message ever crosses the HTTP boundary. Every
+  persistence failure is logged in full server-side and returned to the
+  client as a generic `503` (`_persistence_unavailable`), because a
+  Firestore/gRPC error string embeds the resource path -- and therefore the
+  GCP project id and database name -- along with internal endpoints and IAM
+  specifics, none of which an anonymous caller should see.
 - `POST /api/assets/{asset_id}/reset` restores the in-memory synthetic
   asset store to its on-disk baseline (`data_store.store.reset()`). It
   never touches Gemini, Firestore, or a real device -- it only discards a
@@ -33,6 +39,7 @@ Safety boundary:
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from dataclasses import asdict
@@ -58,6 +65,28 @@ from .repository import IncidentRecord, IncidentRepository, RepositoryError
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SERVICE_NAME = "ai-raxbar-agent"
+
+logger = logging.getLogger(__name__)
+
+# Client-facing text for every persistence failure. Deliberately generic:
+# a backend exception's own message can carry implementation detail a
+# public, unauthenticated caller has no business seeing (Firestore/gRPC
+# errors, for example, embed the resource path -- which includes the GCP
+# project id and database name -- plus internal endpoints and IAM
+# specifics). The full exception is logged server-side instead, where an
+# operator can read it, so nothing diagnostic is lost.
+_PERSISTENCE_UNAVAILABLE_DETAIL = (
+    "Persistence backend unavailable. The request was not applied; no action "
+    "was executed. See server logs for details."
+)
+
+
+def _persistence_unavailable(exc: Exception, *, operation: str) -> HTTPException:
+    """Log the real failure server-side, return a generic 503 for the
+    client. Never leaks `str(exc)` across the HTTP boundary."""
+    logger.exception("Persistence failure during %s", operation)
+    return HTTPException(status_code=503, detail=_PERSISTENCE_UNAVAILABLE_DETAIL)
+
 
 # Public API-layer synthetic-data boundary. Deliberately broader than (and
 # independent of) `repository._DEMO_CLEANUP_PREFIXES` -- that guard exists
@@ -213,7 +242,7 @@ def _require_repository() -> IncidentRepository:
     try:
         return get_repository()
     except RepositoryUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _persistence_unavailable(exc, operation="repository selection") from exc
 
 
 def _require_synthetic_id(identifier: str, *, kind: str) -> None:
@@ -227,11 +256,17 @@ def _transition_approval(incident_id: str, req: ApprovalRequest, *, action: str)
     _require_synthetic_id(incident_id, kind="incident_id")
     repo = _require_repository()
 
-    incident = repo.get_incident(incident_id)
+    try:
+        incident = repo.get_incident(incident_id)
+    except RepositoryError as exc:
+        raise _persistence_unavailable(exc, operation="incident read") from exc
     if incident is None:
         raise HTTPException(status_code=404, detail=f"Unknown incident_id: {incident_id!r}")
 
-    current = repo.get_approval_state(incident_id) or approval.request_approval()
+    try:
+        current = repo.get_approval_state(incident_id) or approval.request_approval()
+    except RepositoryError as exc:
+        raise _persistence_unavailable(exc, operation="approval-state read") from exc
     try:
         if action == "approve":
             new_state = approval.approve(current, approver=req.approver, reason=req.reason)
@@ -243,7 +278,7 @@ def _transition_approval(incident_id: str, req: ApprovalRequest, *, action: str)
     try:
         repo.save_approval_state(incident_id, new_state)
     except RepositoryError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise _persistence_unavailable(exc, operation=f"approval {action}") from exc
 
     return {"incident_id": incident_id, "approval": _approval_to_dict(new_state)}
 
@@ -315,10 +350,13 @@ def create_app() -> FastAPI:
             )
         except ExecutionBlockedError:
             blocked = True
-            records = repo.list_audit_records(incident_id)
+            try:
+                records = repo.list_audit_records(incident_id)
+            except RepositoryError as exc:
+                raise _persistence_unavailable(exc, operation="audit-record read") from exc
             record = records[-1]
         except RepositoryError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise _persistence_unavailable(exc, operation="incident analysis") from exc
 
         # Deterministic evidence for the demo UI's evidence panel (Batch 5E).
         # A second, pure, read-only call into the same Batch 1 tools
@@ -393,11 +431,17 @@ def create_app() -> FastAPI:
         _require_synthetic_id(incident_id, kind="incident_id")
         repo = _require_repository()
 
-        incident = repo.get_incident(incident_id)
+        try:
+            incident = repo.get_incident(incident_id)
+        except RepositoryError as exc:
+            raise _persistence_unavailable(exc, operation="incident read") from exc
         if incident is None:
             raise HTTPException(status_code=404, detail=f"Unknown incident_id: {incident_id!r}")
 
-        approval_state = repo.get_approval_state(incident_id) or approval.request_approval()
+        try:
+            approval_state = repo.get_approval_state(incident_id) or approval.request_approval()
+        except RepositoryError as exc:
+            raise _persistence_unavailable(exc, operation="approval-state read") from exc
         proposal = _proposal_from_incident(incident)
 
         try:
@@ -407,7 +451,7 @@ def create_app() -> FastAPI:
         except ExecutionBlockedError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RepositoryError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise _persistence_unavailable(exc, operation="action execution") from exc
 
         return {"incident_id": incident_id, "audit_record": _audit_record_to_dict(record)}
 

@@ -9,7 +9,9 @@ approval, then executes and verifies it in simulation only -- with every
 step audited in Firestore.**
 
 - **Live demo (judge UI):** <https://ai-raxbar-agent-ti5u2iy34q-uc.a.run.app/demo>
-- **Track:** Taskmaster (secondary target: Best Architectural Design)
+- **Track:** Taskmaster
+- **Also submitted for the Best Architectural Design prize/category** (not a
+  second track -- the track is Taskmaster)
 - **Status:** Gemini 3.5 Flash -- **LIVE VERIFIED** · Google ADK -- **LIVE VERIFIED** · Cloud Run -- **LIVE VERIFIED** · Firestore -- **LIVE VERIFIED**
   (full matrix: [`docs/LIVE_VERIFICATION_MATRIX.md`](docs/LIVE_VERIFICATION_MATRIX.md))
 
@@ -23,8 +25,9 @@ step audited in Firestore.**
 - [Pre-existing vs. New Work](docs/PRE_EXISTING_VS_NEW.md)
 - [Devpost Architecture Summary](docs/DEVPOST_SUBMISSION.md)
 - [Local Setup / Spin-up](#local-spin-up) (below)
-- [Cloud Run Deployment (template)](docs/CLOUD_RUN_DEPLOYMENT.md)
+- [Cloud Run Deployment (live state + reproducible template)](docs/CLOUD_RUN_DEPLOYMENT.md)
 - [Build History (Batch 1-5 detail)](docs/BUILD_HISTORY.md)
+- [Demo video: Google Flow disclosure](#demo-video-what-is-product-evidence-and-what-is-not)
 - [License (MIT, this repo only)](LICENSE)
 
 ## Product story
@@ -98,8 +101,9 @@ OBSERVE -> DETECT -> DIAGNOSE -> PLAN -> POLICY GATE -> HUMAN APPROVAL
         -> ACT (SIMULATED) -> VERIFY -> AUDIT
 ```
 
-**Track:** Taskmaster
-**Secondary target:** Best Architectural Design
+**Track:** Taskmaster (single track).
+**Prize/category also targeted:** Best Architectural Design -- a prize
+opportunity, not a secondary track.
 
 ## Architecture principle
 
@@ -121,8 +125,8 @@ a policy decision, or execute an action the policy gate blocks.
 | Google ADK                        | LIVE_VERIFIED             |
 | Human approval                    | LIVE_VERIFIED             |
 | Simulated action + verification   | LIVE_VERIFIED             |
-| Cloud Run-ready HTTP service       | IMPLEMENTED               |
-| Docker/container configuration    | IMPLEMENTED               |
+| Cloud Run HTTP service (`web.py`)  | LIVE_VERIFIED             |
+| Docker/container configuration    | LIVE_VERIFIED             |
 | Cloud Run deployment              | LIVE_VERIFIED              |
 | Gemini 3.5 Flash through Cloud Run | LIVE_VERIFIED             |
 | Google ADK tool calling through Cloud Run | LIVE_VERIFIED      |
@@ -145,9 +149,9 @@ See:
 
 ## Live Verification Evidence
 
-Both live checks below used only synthetic/fictional data, were run
-manually by a human as a one-off opt-in action, and are not invoked
-automatically by any test, script, or orchestrator code path.
+Every live check below used only synthetic/fictional data, was run manually
+by a human as a one-off opt-in action, and is not invoked automatically by
+any test, script, or orchestrator code path.
 
 **Gemini -- LIVE_VERIFIED.** `scripts/smoke_test_gemini.py --yes
 --asset-id DEMO-TP-007`, model `gemini-3.5-flash`, against the synthetic
@@ -156,7 +160,7 @@ asset `DEMO-TP-007`. Confirmed: a real Gemini response was received;
 engine's output, not anything the model asserted; the recommended action
 was classified `HIGH_IMPACT` by `policy.py`, so `approval_required=True`
 and `tools.simulate_remediation` was never called. Full detail in "Current
-scope: Batch 2" above.
+scope: Batch 2" in [`docs/BUILD_HISTORY.md`](docs/BUILD_HISTORY.md).
 
 **Firestore -- LIVE_VERIFIED.** One controlled, opt-in live smoke test
 against GCP project `ai-raxbar-agent-hackathon`, default Firestore
@@ -172,20 +176,20 @@ Application Default Credentials only -- no credential value, token, or ADC
 path was printed at any point.
 
 **Cloud Run -- LIVE_VERIFIED.** Service `ai-raxbar-agent` in
-`us-central1` (see "Current scope: Batch 5B" and "Current scope: Batch 5C"
-above). `GET /health` and `GET /api/status` against the live Cloud Run URL
+`us-central1` (see "Current scope: Batch 5B" and "Current scope: Batch 5C" in
+[`docs/BUILD_HISTORY.md`](docs/BUILD_HISTORY.md)). `GET /health` and `GET /api/status` against the live Cloud Run URL
 both returned `HTTP 200`, with `/api/status` confirming
 `synthetic_only_mode: true` and no secret in the response.
 
 **Gemini 3.5 Flash through Cloud Run -- LIVE_VERIFIED.** One hosted
 `POST /api/incidents/analyze` call for synthetic asset `DEMO-TP-007`
 against the live Cloud Run URL, with the Gemini credential supplied via
-Secret Manager (see Batch 5C above). Deterministic risk (`100` /
+Secret Manager (see Batch 5C in `docs/BUILD_HISTORY.md`). Deterministic risk (`100` /
 `CRITICAL`), 14 valid evidence refs, `recommended_action =
 REBALANCE_LOAD`, `policy_class = HIGH_IMPACT`, `approval_required = true`,
 `next_step = WAIT_FOR_HUMAN_APPROVAL`; `tools.simulate_remediation` was
 never called. Firestore remained `LOCAL_ONLY` on the Batch 5C revision --
-see the Batch 5D entry below for the live Firestore-backed run.
+see the Batch 5D entry in `docs/BUILD_HISTORY.md` for the live Firestore-backed run.
 
 **Google ADK tool calling through Cloud Run -- LIVE_VERIFIED.** The same
 hosted call above exercised the real ADK agent's real tool-calling loop
@@ -196,7 +200,7 @@ live tool results, not asserted independently of them.
 
 **Hosted approval -> simulated action -> verify -> Firestore audit --
 LIVE_VERIFIED.** One complete hosted synthetic workflow (see "Current
-scope: Batch 5D" above), against the live Cloud Run service with
+scope: Batch 5D" in `docs/BUILD_HISTORY.md`), against the live Cloud Run service with
 `AI_RAXBAR_REPOSITORY_BACKEND=firestore`: `/analyze` (one Gemini call) ->
 live-read-confirmed Firestore persistence of the pending incident/approval
 -> `/execute` blocked pre-approval (`HTTP 409`) -> `/approve` -> `/execute`
@@ -215,11 +219,38 @@ all (`/health`, `/api/status`) -- no real coordinates, real infrastructure
 identifiers, AI RAXBAR V3 data, CAS, Billing, or Google Sheets access
 occurred in any of them.
 
-### Not yet implemented (NEXT / Batch 5E+)
+### Not implemented (deliberately out of scope)
 
-- A user-facing UI (every verification so far is via direct HTTP calls,
-  not a browser front end).
-- Any production write path.
+- **Any production write path.** The only "action" in this system is
+  `tools.simulate_remediation`, which mutates in-memory synthetic state.
+  There is no code path to a real grid device or external system.
+- **Real telemetry ingestion.** All evidence comes from the synthetic
+  fixtures in `data/`.
+- **Multi-incident triage, role-based approval/delegation, and signed
+  tamper-evident audit records.** Future direction, not claimed here.
+
+The judge-facing browser UI listed as "next" in earlier batches **is now
+implemented and live** at [`/demo`](https://ai-raxbar-agent-ti5u2iy34q-uc.a.run.app/demo)
+(Batch 5E; `src/ai_raxbar_agent/static/demo.html`), and is covered by
+`tests/test_demo_ui.py`. See `docs/BUILD_HISTORY.md` for the batch-by-batch
+record.
+
+## Demo video: what is product evidence and what is not
+
+The submission video contains cinematic sequences generated with **Google
+Flow**. They are there to communicate the operational stakes -- a load ratio
+of 1.3 is a number until you show what it means downstream -- and nothing
+more.
+
+> **Google Flow was used for cinematic storytelling and contextual
+> visualization. The deployed AI RAXBAR screen recording is the product
+> evidence.**
+
+No Flow-generated footage is real infrastructure footage, real AI RAXBAR
+output, proof of deployment, or proof of grid control. Every product claim
+in the video is shown as live UI or live API output from the Cloud Run
+service, and every one of those is independently reproducible by a judge at
+the demo URL above.
 
 ## License
 
@@ -251,7 +282,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-All 125 tests are offline and deterministic -- **no Gemini API key,
+All 137 tests are offline and deterministic -- **no Gemini API key,
 Google Cloud credentials, or network access are required to run them**,
 including the Batch 2 agent tests (`tests/test_agent.py`), which run the
 real `google.adk` agent/tool-calling loop against a scripted fake model

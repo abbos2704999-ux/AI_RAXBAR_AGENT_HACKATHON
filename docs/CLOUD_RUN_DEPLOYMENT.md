@@ -1,9 +1,19 @@
-# Cloud Run deployment (template only -- not yet executed)
+# Cloud Run deployment (reproducible template + current live state)
 
-Status: **NOT YET DEPLOYED.** This document records the command shape a
-human operator will run in Batch 5B. Nothing in this repository runs any
-command below automatically, and none of it has been executed as part of
-Batch 5A.
+Status: **DEPLOYED AND LIVE.** The service `ai-raxbar-agent` is running in
+region `us-central1` (project `ai-raxbar-agent-hackathon`) and serving the
+judge-facing demo:
+
+| Endpoint | Live status |
+|---|---|
+| `https://ai-raxbar-agent-ti5u2iy34q-uc.a.run.app/health` | `HTTP 200` |
+| `https://ai-raxbar-agent-ti5u2iy34q-uc.a.run.app/api/status` | `HTTP 200` |
+| `https://ai-raxbar-agent-ti5u2iy34q-uc.a.run.app/demo` | `HTTP 200` |
+
+This document remains the **reproducible template** for that deployment:
+the commands below are parameterised so anyone can redeploy this repository
+into their own project. Nothing in this repository runs any command below
+automatically -- every deployment step is a deliberate human action.
 
 ## Prerequisites (human, one-time, outside this repo)
 
@@ -59,14 +69,39 @@ Notes on every placeholder:
   operator who instead wants Vertex AI auth would drop `--set-secrets` and
   set `GOOGLE_GENAI_USE_VERTEXAI=true` plus `GOOGLE_CLOUD_LOCATION` instead
   (see `config.py`).
-- `--no-allow-unauthenticated` is the recommended default for this
-  synthetic-data demo service; switch to `--allow-unauthenticated` only if
-  public access is explicitly wanted.
+- **Access policy -- deliberate divergence from the template default.**
+  The template above shows `--no-allow-unauthenticated`, which is the right
+  default for a private redeployment. **The judge-facing hackathon
+  deployment is deliberately different: it runs with
+  `--allow-unauthenticated`**, so a Devpost/Google judge can open `/demo`
+  and reproduce the full workflow without a Google Cloud account or a
+  signed token. That is a conscious, scoped trade-off, and it is safe only
+  because of what the service can do:
+  - every endpoint rejects any identifier outside `DEMO-*` / `HACKATHON-*`
+    (`web.py::require_synthetic_identifier`), so there is no reachable
+    real/production data;
+  - the only write action is `tools.simulate_remediation`, which mutates
+    in-memory synthetic state and has no network client or device
+    protocol;
+  - `HIGH_IMPACT` actions still require an explicit human approval,
+    enforced independently in the orchestrator and in the write tool, so
+    an anonymous caller cannot execute one without first approving it
+    through the same audited state machine;
+  - `/api/status` reports configuration flags only -- never a credential,
+    key, or raw project id.
+
+  Residual exposure that public access does create: an anonymous caller can
+  trigger `POST /api/incidents/analyze`, which costs one billed Gemini
+  call. This is a **quota/cost** exposure, not a data or credential
+  exposure. Mitigation for the judging window is a Cloud Run
+  `--max-instances` cap plus Gemini quota monitoring; after judging, the
+  service should be switched back to `--no-allow-unauthenticated` or torn
+  down.
 - Omitting `AI_RAXBAR_REPOSITORY_BACKEND` (or setting it to `local`) runs
   Cloud Run against the offline in-memory repository instead of Firestore --
   useful for a first smoke deploy before wiring up persistence.
 
-## Post-deploy checks (manual, Batch 5B)
+## Post-deploy checks (manual)
 
 ```bash
 curl -s "${SERVICE_URL}/health"

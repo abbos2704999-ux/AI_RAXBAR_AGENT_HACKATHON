@@ -39,8 +39,8 @@ this repository -- is new work written for this hackathon:
   API key wired in via a narrowly-scoped Secret Manager secret, the
   Firestore-backed hosted revision, and the self-contained judge-facing
   demo UI at `/demo` (`static/demo.html`).
-- **Tests and docs** -- the entire offline test suite (`tests/`, 125 tests
-  at last count) and all documentation (`docs/`, `README.md`).
+- **Tests and docs** -- the entire offline test suite (`tests/`, 137 tests
+  as of the final submission build) and all documentation (`docs/`, `README.md`).
 
 The risk-scoring *concept* (transparent, rule-based, evidence-backed
 assessment) is a common pattern in operations tooling and is not itself V3
