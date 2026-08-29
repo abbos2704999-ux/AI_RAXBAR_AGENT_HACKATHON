@@ -27,7 +27,7 @@ step audited in Firestore.**
 - [Local Setup / Spin-up](#local-spin-up) (below)
 - [Cloud Run Deployment (live state + reproducible template)](docs/CLOUD_RUN_DEPLOYMENT.md)
 - [Build History (Batch 1-5 detail)](docs/BUILD_HISTORY.md)
-- [Demo video: Google Flow disclosure](#demo-video-what-is-product-evidence-and-what-is-not)
+- [Demo video: evidence vs. illustration](#demo-video-what-is-evidence-and-what-is-illustration)
 - [License (MIT, this repo only)](LICENSE)
 
 ## Product story
@@ -235,22 +235,33 @@ implemented and live** at [`/demo`](https://ai-raxbar-agent-ti5u2iy34q-uc.a.run.
 `tests/test_demo_ui.py`. See `docs/BUILD_HISTORY.md` for the batch-by-batch
 record.
 
-## Demo video: what is product evidence and what is not
+## Demo video: what is evidence and what is illustration
 
-The submission video contains cinematic sequences generated with **Google
-Flow**. They are there to communicate the operational stakes -- a load ratio
-of 1.3 is a number until you show what it means downstream -- and nothing
-more.
+The submission video is **generated from code** -- a Remotion
+(React/TypeScript) project that renders deterministically from the evidence
+in and around this repository. It contains no AI-generated footage and no
+stock footage.
 
-> **Google Flow was used for cinematic storytelling and contextual
-> visualization. The deployed AI RAXBAR screen recording is the product
-> evidence.**
+> **Every screenshot in the video is an unmodified capture of a real system:
+> the deployed Cloud Run service, the Google Cloud console, Firestore,
+> GitHub, or the pre-existing AI RAXBAR V3 platform. The live demo above is
+> the reproducible proof of action.**
 
-No Flow-generated footage is real infrastructure footage, real AI RAXBAR
-output, proof of deployment, or proof of grid control. Every product claim
-in the video is shown as live UI or live API output from the Cloud Run
-service, and every one of those is independently reproducible by a judge at
-the demo URL above.
+Two things in the video are drawn rather than captured, and both are labelled
+on screen for their entire duration:
+
+- The **operations-console sequence** is a native animation of the synthetic
+  `DEMO-TP-007` incident timeline, carrying a persistent `SYNTHETIC DEMO DATA`
+  tag. It illustrates why four separate incidents are one recurring asset
+  problem; it is not a screen recording and is not presented as one.
+- The **architecture diagram** is drawn natively so every stage can be
+  colour-coded by owner (tool-owned / model-owned / human-owned / simulated).
+  The same boundaries are written in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+Captured evidence is shown with **static framing** -- no zoom, pan or motion
+is applied to any screenshot -- so what a judge sees is exactly what the
+system rendered, at or below native pixel density. Every product claim in the
+video is independently reproducible by a judge at the demo URL above.
 
 ## License
 
